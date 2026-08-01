@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom';
 import { API_BASE } from '../apiConfig';
 
-export default function Navbar({ searchTerm = '', setSearchTerm, activeMenu = 'Analysis', setActiveMenu, activeTab = 'Trades', setActiveTab, userRole = 'Super Admin', setUserRole, onLogout }) {
+export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '', setSearchTerm, activeMenu = 'Analysis', setActiveMenu, activeTab = 'Trades', setActiveTab, userRole = 'Super Admin', setUserRole, onLogout }) {
 	const [isWatchlistOpen, setIsWatchlistOpen] = useState(false);
 	const [isRoleSwitcherOpen, setIsRoleSwitcherOpen] = useState(false);
 	const [watchlistSearch, setWatchlistSearch] = useState('');
@@ -123,6 +123,33 @@ export default function Navbar({ searchTerm = '', setSearchTerm, activeMenu = 'A
 				if (showLoading) setLoading(false);
 			});
 	};
+
+	const [currentUserProfile, setCurrentUserProfile] = useState(null);
+
+	const fetchCurrentUserProfile = () => {
+		fetch(`${API_BASE}/users`)
+			.then((res) => res.json())
+			.then((data) => {
+				if (data && Array.isArray(data.users) && data.users.length > 0) {
+					const match = data.users.find((u) => u.role.toLowerCase() === (userRole || 'Super Admin').toLowerCase()) || data.users[0];
+					setCurrentUserProfile(match);
+				}
+			})
+			.catch((err) => console.error('Error fetching user profile in Navbar:', err));
+	};
+
+	useEffect(() => {
+		fetchCurrentUserProfile();
+
+		const handleUsersUpdated = () => {
+			fetchCurrentUserProfile();
+		};
+
+		window.addEventListener('usersUpdated', handleUsersUpdated);
+		return () => {
+			window.removeEventListener('usersUpdated', handleUsersUpdated);
+		};
+	}, [userRole]);
 
 	useEffect(() => {
 		fetchWatchlistFromDB(true);
@@ -450,12 +477,12 @@ export default function Navbar({ searchTerm = '', setSearchTerm, activeMenu = 'A
 							<div className="fixed inset-0 z-40" onClick={() => setIsUserProfileCardOpen(false)}></div>
 							<div className="absolute right-0 mt-3 w-64 bg-white rounded-2xl shadow-2xl border border-slate-100 p-4 z-50 animate-in fade-in zoom-in-95 duration-150 space-y-3">
 								<div className="flex items-center gap-3 border-b border-slate-100 pb-3">
-									<div className="w-10 h-10 rounded-xl bg-[#9462d2] text-white font-bold flex items-center justify-center text-sm shadow-xs flex-shrink-0">
-										GR
+									<div className={`w-10 h-10 rounded-xl ${currentUserProfile?.avatarBg || 'bg-[#9462d2]'} text-white font-bold flex items-center justify-center text-sm shadow-xs flex-shrink-0`}>
+										{currentUserProfile?.name ? currentUserProfile.name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase() : 'DS'}
 									</div>
 									<div className="min-w-0 flex-1">
-										<h4 className="text-sm font-bold text-slate-800 truncate">Gowtham Raj</h4>
-										<p className="text-[11px] text-slate-400 font-medium truncate">gowtham@stockinsight.io</p>
+										<h4 className="text-sm font-bold text-slate-800 truncate">{currentUserProfile?.name || 'Dhinakaran Sekar'}</h4>
+										<p className="text-[11px] text-slate-400 font-medium truncate">{currentUserProfile?.email || 'dhinakaran.s@jubilantenterprises.in'}</p>
 									</div>
 								</div>
 
@@ -468,7 +495,9 @@ export default function Navbar({ searchTerm = '', setSearchTerm, activeMenu = 'A
 									</div>
 									<div className="flex items-center justify-between text-xs pt-1.5 border-t border-slate-200/60">
 										<span className="font-semibold text-slate-400 uppercase text-[10px] tracking-wider">Emp Code</span>
-										<span className="font-mono font-bold text-slate-800 text-[12px]">EMP-1001</span>
+										<span className="font-mono font-bold text-slate-800 text-[12px]">
+											{currentUserProfile?.empCode || 'JC0033'}
+										</span>
 									</div>
 								</div>
 

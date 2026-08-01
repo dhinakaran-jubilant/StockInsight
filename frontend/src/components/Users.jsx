@@ -35,7 +35,12 @@ export default function Users() {
 	const [newEmpCode, setNewEmpCode] = useState('');
 	const [newUserName, setNewUserName] = useState('');
 	const [newUserEmail, setNewUserEmail] = useState('');
+	const [newUserPassword, setNewUserPassword] = useState('');
+	const [showNewUserPassword, setShowNewUserPassword] = useState(false);
 	const [newUserRole, setNewUserRole] = useState('User');
+
+	const [editPassword, setEditPassword] = useState('');
+	const [showEditPassword, setShowEditPassword] = useState(false);
 
 	const fetchUsersFromDB = () => {
 		setLoading(true);
@@ -68,6 +73,7 @@ export default function Users() {
 				empCode: newEmpCode.trim(),
 				name: newUserName.trim(),
 				email: newUserEmail.trim(),
+				password: newUserPassword.trim() || '123456',
 				role: newUserRole,
 				status: 'Active',
 				avatarBg: randomBg,
@@ -79,8 +85,11 @@ export default function Users() {
 				setNewEmpCode('');
 				setNewUserName('');
 				setNewUserEmail('');
+				setNewUserPassword('');
+				setShowNewUserPassword(false);
 				setNewUserRole('User');
 				setIsAddUserModalOpen(false);
+				window.dispatchEvent(new Event('usersUpdated'));
 				fetchUsersFromDB();
 			})
 			.catch((err) => console.error('Error adding user to DB:', err));
@@ -91,6 +100,8 @@ export default function Users() {
 		setEditEmpCode(user.empCode || '');
 		setEditName(user.name);
 		setEditEmail(user.email);
+		setEditPassword(user.password || '');
+		setShowEditPassword(false);
 		setEditRole(user.role);
 		setEditStatus(user.status);
 		setIsEditUserRoleDropdownOpen(false);
@@ -110,6 +121,7 @@ export default function Users() {
 				empCode: editEmpCode.trim(),
 				name: editName.trim(),
 				email: editEmail.trim(),
+				password: editPassword.trim(),
 				role: editRole,
 				status: editStatus
 			})
@@ -118,6 +130,9 @@ export default function Users() {
 			.then(() => {
 				setIsEditUserModalOpen(false);
 				setEditingUser(null);
+				setEditPassword('');
+				setShowEditPassword(false);
+				window.dispatchEvent(new Event('usersUpdated'));
 				fetchUsersFromDB();
 			})
 			.catch((err) => console.error('Error updating user in DB:', err));
@@ -140,6 +155,7 @@ export default function Users() {
 			.then(() => {
 				setIsDeleteUserModalOpen(false);
 				setUserToDelete(null);
+				window.dispatchEvent(new Event('usersUpdated'));
 				fetchUsersFromDB();
 			})
 			.catch((err) => console.error('Error deleting user from DB:', err));
@@ -601,6 +617,30 @@ export default function Users() {
 							</div>
 
 							<div>
+								<label className="text-sm font-bold text-slate-700 block mb-1.5">Password <span className="text-red-500">*</span></label>
+								<div className="relative flex items-center">
+									<input
+										type={showNewUserPassword ? 'text' : 'password'}
+										placeholder="Enter account password..."
+										value={newUserPassword}
+										onChange={(e) => setNewUserPassword(e.target.value)}
+										required
+										className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 pr-10 text-sm text-slate-800 outline-none focus:bg-white focus:border-[#9462d2]"
+									/>
+									<button
+										type="button"
+										onClick={() => setShowNewUserPassword((prev) => !prev)}
+										className="absolute right-3 text-slate-400 hover:text-slate-600 focus:outline-none cursor-pointer"
+										title={showNewUserPassword ? 'Hide password' : 'Show password'}
+									>
+										<span className="material-symbols-outlined text-[18px]">
+											{showNewUserPassword ? 'visibility_off' : 'visibility'}
+										</span>
+									</button>
+								</div>
+							</div>
+
+							<div>
 								<label className="text-sm font-bold text-slate-700 block mb-1.5">Role <span className="text-red-500">*</span></label>
 								<div className="relative inline-block w-full text-left">
 									<button
@@ -730,6 +770,31 @@ export default function Users() {
 									required
 									className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-sm text-slate-800 outline-none focus:bg-white focus:border-[#9462d2]"
 								/>
+							</div>
+
+							<div>
+								<label className="text-sm font-bold text-slate-700 block mb-1.5">
+									Password <span className="text-slate-400 font-normal text-xs">(Leave blank to keep unchanged)</span>
+								</label>
+								<div className="relative flex items-center">
+									<input
+										type={showEditPassword ? 'text' : 'password'}
+										placeholder="Enter new password..."
+										value={editPassword}
+										onChange={(e) => setEditPassword(e.target.value)}
+										className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 pr-10 text-sm text-slate-800 outline-none focus:bg-white focus:border-[#9462d2]"
+									/>
+									<button
+										type="button"
+										onClick={() => setShowEditPassword((prev) => !prev)}
+										className="absolute right-3 text-slate-400 hover:text-slate-600 focus:outline-none cursor-pointer"
+										title={showEditPassword ? 'Hide password' : 'Show password'}
+									>
+										<span className="material-symbols-outlined text-[18px]">
+											{showEditPassword ? 'visibility_off' : 'visibility'}
+										</span>
+									</button>
+								</div>
 							</div>
 
 							{/* Role Selector */}

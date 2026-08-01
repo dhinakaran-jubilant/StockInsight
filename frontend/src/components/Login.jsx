@@ -1,23 +1,54 @@
 import React, { useState } from 'react';
 import chessImage from '../assets/assortment-pink-chess-pieces.jpg';
+import { API_BASE } from '../apiConfig';
 
 export default function Login({ onLoginSuccess }) {
-	const [empCode, setEmpCode] = useState('EMP-1001');
-	const [password, setPassword] = useState('123456');
+	const [empCode, setEmpCode] = useState('');
+	const [password, setPassword] = useState('');
 	const [showPassword, setShowPassword] = useState(false);
 	const [selectedRole, setSelectedRole] = useState('Super Admin');
 	const [error, setError] = useState('');
 
 	const handleSubmit = (e) => {
 		e.preventDefault();
-		if (!empCode.trim() || !password.trim()) {
+		const code = empCode.trim().toUpperCase();
+		if (!code || !password.trim()) {
 			setError('Please enter both employee code and password.');
 			return;
 		}
 		setError('');
-		if (onLoginSuccess) {
-			onLoginSuccess({ empCode: empCode.trim(), role: selectedRole });
-		}
+
+		fetch(`${API_BASE}/users`)
+			.then((res) => res.json())
+			.then((data) => {
+				if (data && Array.isArray(data.users) && data.users.length > 0) {
+					const match = data.users.find(
+						(u) => u.empCode && u.empCode.toUpperCase() === code
+					);
+					if (match) {
+						if (onLoginSuccess) onLoginSuccess(match);
+						return;
+					}
+				}
+				const fallbackUser = {
+					empCode: code,
+					name: 'Gowtham Raj',
+					email: 'gowtham@stockinsight.io',
+					role: selectedRole || 'Super Admin',
+					avatarBg: 'bg-purple-600'
+				};
+				if (onLoginSuccess) onLoginSuccess(fallbackUser);
+			})
+			.catch(() => {
+				const fallbackUser = {
+					empCode: code,
+					name: 'Gowtham Raj',
+					email: 'gowtham@stockinsight.io',
+					role: selectedRole || 'Super Admin',
+					avatarBg: 'bg-[#9462d2]'
+				};
+				if (onLoginSuccess) onLoginSuccess(fallbackUser);
+			});
 	};
 
 	return (

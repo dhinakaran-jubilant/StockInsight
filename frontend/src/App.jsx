@@ -58,11 +58,28 @@ const getPathFromRoute = (menu, tab) => {
 };
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(true);
+  const [loggedInUser, setLoggedInUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('stockinsight_logged_in_user');
+      return saved ? JSON.parse(saved) : { empCode: 'JC0033', name: 'Dhinakaran Sekar', email: 'dhinakaran.s@jubilantenterprises.in', role: 'Super Admin', avatarBg: 'bg-purple-600' };
+    } catch (e) {
+      return { empCode: 'JC0033', name: 'Dhinakaran Sekar', email: 'dhinakaran.s@jubilantenterprises.in', role: 'Super Admin', avatarBg: 'bg-purple-600' };
+    }
+  });
+
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    try {
+      const saved = localStorage.getItem('stockinsight_logged_in_user');
+      return Boolean(saved && JSON.parse(saved));
+    } catch (e) {
+      return false;
+    }
+  });
+
   const [activeMenu, setActiveMenu] = useState(() => getRouteFromPath(window.location.pathname).activeMenu);
   const [activeTab, setActiveTab] = useState(() => getRouteFromPath(window.location.pathname).activeTab);
   const [searchTerm, setSearchTerm] = useState('');
-  const [userRole, setUserRole] = useState('Super Admin');
+  const [userRole, setUserRole] = useState(() => (loggedInUser && loggedInUser.role ? loggedInUser.role : 'Super Admin'));
 
   // Sync URL when state changes
   useEffect(() => {
@@ -82,6 +99,7 @@ export default function App() {
   // Sync state on browser back/forward buttons
   useEffect(() => {
     const handlePopState = () => {
+      if (!isAuthenticated) return;
       const route = getRouteFromPath(window.location.pathname);
       setActiveMenu(route.activeMenu);
       setActiveTab(route.activeTab);
@@ -89,7 +107,17 @@ export default function App() {
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, []);
+  }, [isAuthenticated]);
+
+  // Prevent logged in users from returning to /login
+  useEffect(() => {
+    if (isAuthenticated) {
+      const currentPath = window.location.pathname.toLowerCase();
+      if (currentPath === '/login' || currentPath === '/login/') {
+        window.history.replaceState(null, '', getPathFromRoute(activeMenu, activeTab));
+      }
+    }
+  }, [isAuthenticated, activeMenu, activeTab]);
 
   // Redirect away from Users menu if role is not Super Admin
   useEffect(() => {
@@ -98,16 +126,69 @@ export default function App() {
     }
   }, [userRole, activeMenu]);
 
+  // 1-Hour Inactivity Auto-Logout Mechanism (60 minutes = 3,600,000 ms)
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour
+    let timerId;
+
+    const handleAutoLogout = () => {
+      try {
+        localStorage.removeItem('stockinsight_logged_in_user');
+      } catch (e) {}
+      setIsAuthenticated(false);
+      window.history.replaceState(null, '', '/login');
+      alert('Session expired due to 1 hour of inactivity. Please log in again.');
+    };
+
+    const resetTimer = () => {
+      if (timerId) clearTimeout(timerId);
+      timerId = setTimeout(handleAutoLogout, INACTIVITY_TIMEOUT_MS);
+    };
+
+    resetTimer();
+
+    const activityEvents = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
+    let lastReset = Date.now();
+
+    const onUserActivity = () => {
+      const now = Date.now();
+      if (now - lastReset > 1000) {
+        lastReset = now;
+        resetTimer();
+      }
+    };
+
+    activityEvents.forEach((event) => {
+      window.addEventListener(event, onUserActivity, { passive: true });
+    });
+
+    return () => {
+      if (timerId) clearTimeout(timerId);
+      activityEvents.forEach((event) => {
+        window.removeEventListener(event, onUserActivity);
+      });
+    };
+  }, [isAuthenticated]);
+
   if (!isAuthenticated) {
     return (
       <Login
         onLoginSuccess={(user) => {
           setIsAuthenticated(true);
-          if (user.role) {
-            setUserRole(user.role);
+          if (user) {
+            setLoggedInUser(user);
+            try {
+              localStorage.setItem('stockinsight_logged_in_user', JSON.stringify(user));
+            } catch (e) {}
+            if (user.role) {
+              setUserRole(user.role);
+            }
           }
           setActiveMenu('Dashboard');
           setActiveTab('Trades');
+          window.history.replaceState(null, '', '/dashboard');
         }}
       />
     );
@@ -128,6 +209,8 @@ export default function App() {
       <div className="flex-1 flex flex-col overflow-hidden transition-all duration-300 ml-[90px]">
         {/* Top Navbar */}
         <Navbar
+          loggedInUser={loggedInUser}
+          setLoggedInUser={setLoggedInUser}
           searchTerm={searchTerm}
           setSearchTerm={setSearchTerm}
           activeMenu={activeMenu}
@@ -135,8 +218,17 @@ export default function App() {
           activeTab={activeTab}
           setActiveTab={setActiveTab}
           userRole={userRole}
-          setUserRole={setUserRole}
-          onLogout={() => setIsAuthenticated(false)}
+          setUserRole={(newRole) => {
+            setUserRole(newRole);
+            setLoggedInUser((prev) => prev ? { ...prev, role: newRole } : prev);
+          }}
+          onLogout={() => {
+            try {
+              localStorage.removeItem('stockinsight_logged_in_user');
+            } catch (e) {}
+            setIsAuthenticated(false);
+            window.history.replaceState(null, '', '/login');
+          }}
         />
 
         {/* Main Page Content */}

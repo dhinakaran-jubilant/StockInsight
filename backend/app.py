@@ -2126,6 +2126,7 @@ def init_users_table():
                     emp_code VARCHAR(50),
                     name VARCHAR(255) NOT NULL,
                     email VARCHAR(255) UNIQUE NOT NULL,
+                    password VARCHAR(255) DEFAULT '123456',
                     role VARCHAR(50) NOT NULL DEFAULT 'User',
                     status VARCHAR(50) NOT NULL DEFAULT 'Active',
                     last_active VARCHAR(100) DEFAULT 'Just now',
@@ -2134,33 +2135,18 @@ def init_users_table():
                 );
             """)
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS emp_code VARCHAR(50);")
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS password VARCHAR(255) DEFAULT '123456';")
             conn.commit()
 
-            cur.execute("SELECT COUNT(*) FROM users;")
-            count = cur.fetchone()[0]
-            if count == 0:
-                seed = [
-                    ('EMP-1001', 'Gowtham Raj', 'gowtham@stockinsight.io', 'Super Admin', 'Active', 'Just now', 'bg-purple-600'),
-                    ('EMP-1002', 'Alex Morgan', 'alex.m@stockinsight.io', 'Admin', 'Active', '12 mins ago', 'bg-blue-600'),
-                    ('EMP-1003', 'Sarah Jenkins', 'sarah.j@stockinsight.io', 'User', 'Active', '1 hour ago', 'bg-emerald-600'),
-                    ('EMP-1004', 'Michael Chen', 'm.chen@stockinsight.io', 'User', 'Inactive', '2 days ago', 'bg-amber-600'),
-                    ('EMP-1005', 'Priya Sharma', 'priya.s@stockinsight.io', 'User', 'Active', '3 hours ago', 'bg-indigo-600'),
-                    ('EMP-1006', 'David Miller', 'david.m@stockinsight.io', 'Admin', 'Active', '5 hours ago', 'bg-rose-600'),
-                    ('EMP-1007', 'Elena Rostova', 'elena.r@stockinsight.io', 'User', 'Active', '45 mins ago', 'bg-teal-600'),
-                    ('EMP-1008', 'James Wilson', 'james.w@stockinsight.io', 'User', 'Active', '4 hours ago', 'bg-violet-600'),
-                    ('EMP-1009', 'Anita Patel', 'anita.p@stockinsight.io', 'Super Admin', 'Active', '30 mins ago', 'bg-[#9462d2]'),
-                    ('EMP-1010', 'Robert Taylor', 'robert.t@stockinsight.io', 'User', 'Inactive', '5 days ago', 'bg-[#101828]'),
-                    ('EMP-1011', 'Sophia Kim', 'sophia.k@stockinsight.io', 'User', 'Active', '2 hours ago', 'bg-cyan-600'),
-                    ('EMP-1012', 'Lucas Vance', 'lucas.v@stockinsight.io', 'User', 'Active', '1 day ago', 'bg-fuchsia-600')
-                ]
-                cur.executemany("""
-                    INSERT INTO users (emp_code, name, email, role, status, last_active, avatar_bg)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (email) DO NOTHING;
-                """, seed)
-                conn.commit()
-
-            cur.execute("UPDATE users SET emp_code = 'EMP-' || (1000 + id) WHERE emp_code IS NULL OR emp_code = '';")
+            cur.execute("TRUNCATE TABLE users RESTART IDENTITY;")
+            seed = [
+                ('JC0033', 'Dhinakaran Sekar', 'dhinakaran.s@jubilantenterprises.in', '123456', 'Super Admin', 'Active', 'Just now', 'bg-purple-600')
+            ]
+            cur.executemany("""
+                INSERT INTO users (emp_code, name, email, password, role, status, last_active, avatar_bg)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (email) DO NOTHING;
+            """, seed)
             conn.commit()
         conn.close()
     except Exception as e:
@@ -2177,7 +2163,7 @@ def get_users_api():
         conn = get_db_conn()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
-                SELECT id, emp_code, name, email, role, status, last_active, avatar_bg, created_at
+                SELECT id, emp_code, name, email, password, role, status, last_active, avatar_bg, created_at
                 FROM users
                 ORDER BY id ASC;
             """)
@@ -2191,6 +2177,7 @@ def get_users_api():
                 "empCode": r['emp_code'] or f"EMP-{1000 + r['id']}",
                 "name": r['name'],
                 "email": r['email'],
+                "password": r.get('password') or '123456',
                 "role": r['role'],
                 "status": r['status'],
                 "lastActive": r['last_active'] or 'Just now',
@@ -2211,6 +2198,7 @@ def add_user_api():
         emp_code = (data.get('empCode') or data.get('emp_code') or '').strip()
         name = data.get('name', '').strip()
         email = data.get('email', '').strip()
+        password = (data.get('password') or '123456').strip()
         role = data.get('role', 'User').strip()
         status = data.get('status', 'Active').strip()
         avatar_bg = data.get('avatarBg', 'bg-purple-600')
@@ -2222,10 +2210,10 @@ def add_user_api():
         conn = get_db_conn()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("""
-                INSERT INTO users (emp_code, name, email, role, status, last_active, avatar_bg)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                RETURNING id, emp_code, name, email, role, status, last_active, avatar_bg;
-            """, (emp_code, name, email, role, status, last_active, avatar_bg))
+                INSERT INTO users (emp_code, name, email, password, role, status, last_active, avatar_bg)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, emp_code, name, email, password, role, status, last_active, avatar_bg;
+            """, (emp_code, name, email, password, role, status, last_active, avatar_bg))
             new_user = cur.fetchone()
 
             if not new_user['emp_code']:
@@ -2243,6 +2231,7 @@ def add_user_api():
                 "empCode": new_user['emp_code'],
                 "name": new_user['name'],
                 "email": new_user['email'],
+                "password": new_user.get('password') or '123456',
                 "role": new_user['role'],
                 "status": new_user['status'],
                 "lastActive": new_user['last_active'],
@@ -2266,17 +2255,27 @@ def edit_user_api(user_id=None):
         emp_code = (data.get('empCode') or data.get('emp_code') or f"EMP-{1000 + int(uid)}").strip()
         name = data.get('name', '').strip()
         email = data.get('email', '').strip()
+        password = (data.get('password') or '').strip()
         role = data.get('role', 'User').strip()
         status = data.get('status', 'Active').strip()
 
         conn = get_db_conn()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("""
-                UPDATE users
-                SET emp_code = %s, name = %s, email = %s, role = %s, status = %s
-                WHERE id = %s
-                RETURNING id, emp_code, name, email, role, status, last_active, avatar_bg;
-            """, (emp_code, name, email, role, status, uid))
+            if password:
+                cur.execute("""
+                    UPDATE users
+                    SET emp_code = %s, name = %s, email = %s, password = %s, role = %s, status = %s
+                    WHERE id = %s
+                    RETURNING id, emp_code, name, email, password, role, status, last_active, avatar_bg;
+                """, (emp_code, name, email, password, role, status, uid))
+            else:
+                cur.execute("""
+                    UPDATE users
+                    SET emp_code = %s, name = %s, email = %s, role = %s, status = %s
+                    WHERE id = %s
+                    RETURNING id, emp_code, name, email, password, role, status, last_active, avatar_bg;
+                """, (emp_code, name, email, role, status, uid))
+
             updated_user = cur.fetchone()
             conn.commit()
         conn.close()
@@ -2291,6 +2290,7 @@ def edit_user_api(user_id=None):
                 "empCode": updated_user['emp_code'],
                 "name": updated_user['name'],
                 "email": updated_user['email'],
+                "password": updated_user.get('password') or '123456',
                 "role": updated_user['role'],
                 "status": updated_user['status'],
                 "lastActive": updated_user['last_active'],

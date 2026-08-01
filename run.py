@@ -1,19 +1,161 @@
+"""
+StockInsight - Master Application Launcher & Scheduler
+
+Unified Entry Point:
+  1. Checks Python dependencies and verifies PostgreSQL DB schema (auto-creates tables/columns).
+  2. Launches Flask Backend on http://127.0.0.1:2500
+  3. Launches React Vite Frontend on http://127.0.0.1:2501
+  4. Starts background Daily Scraper Scheduler (Runs Mon-Sat at 5:00 AM, skipping Sunday).
+
+Usage:
+  - Start application + background 5:00 AM scraper scheduler:
+      python run.py
+
+  - Run all scrapers immediately on startup:
+      python run.py --scrape-now
+
+  - Disable background scraper scheduler:
+      python run.py --no-scheduler
+"""
+
 import os
 import sys
-import subprocess
 import time
-import signal
+import logging
+import argparse
+import subprocess
+import threading
+from datetime import datetime, timedelta
+from pathlib import Path
+
+# Setup Logging for Scraper Sub-system
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(Path(__file__).resolve().parent / "backend" / "scrapers.log", encoding="utf-8")
+    ]
+)
+
+# Base Paths
+BASE_DIR = Path(__file__).resolve().parent
+SCRAPE_DIR = BASE_DIR / "backend" / "scrape"
+
+# Ordered list of scraper scripts (located in backend/scrape/)
+SCRAPERS = [
+    "scrape_nifty_lists_scrapy.py",
+    "scrape_trade_scrapy.py",
+    "scrape_historical.py",
+    "scrape_global_historical.py",
+    "scrape_sectoral_activity.py",
+    "scrape_commodities.py",
+]
+
+
+def run_all_scrapers(python_exec=None):
+    """Executes all 6 scrapers sequentially in order."""
+    if python_exec is None:
+        python_exec = sys.executable
+
+    start_all = time.time()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    logging.info("=" * 65)
+    logging.info(f"STARTING DAILY SCRAPE BATCH AT {now_str}")
+    logging.info("=" * 65)
+
+    summary = []
+
+    for index, script_name in enumerate(SCRAPERS, 1):
+        script_path = SCRAPE_DIR / script_name
+        if not script_path.exists():
+            logging.error(f"[{index}/{len(SCRAPERS)}] Script not found: {script_path}")
+            summary.append((script_name, "FAILED (Not Found)", 0))
+            continue
+
+        logging.info(f"\n---> [{index}/{len(SCRAPERS)}] Running: {script_name}...")
+        t_start = time.time()
+
+        try:
+            subprocess.run(
+                [python_exec, str(script_path)],
+                cwd=str(SCRAPE_DIR),
+                capture_output=False,
+                text=True,
+                check=True
+            )
+            duration = round(time.time() - t_start, 2)
+            logging.info(f"[SUCCESS] {script_name} completed in {duration}s")
+            summary.append((script_name, "SUCCESS", duration))
+
+        except subprocess.CalledProcessError as e:
+            duration = round(time.time() - t_start, 2)
+            logging.error(f"[ERROR] {script_name} failed with exit code {e.returncode} ({duration}s)")
+            summary.append((script_name, f"FAILED (Exit Code {e.returncode})", duration))
+        except Exception as e:
+            duration = round(time.time() - t_start, 2)
+            logging.error(f"[EXCEPTION] Failed to run {script_name}: {e} ({duration}s)")
+            summary.append((script_name, f"FAILED ({type(e).__name__})", duration))
+
+    total_time = round(time.time() - start_all, 2)
+    logging.info("\n" + "=" * 65)
+    logging.info("DAILY SCRAPE BATCH SUMMARY")
+    logging.info("=" * 65)
+    for name, status, dur in summary:
+        logging.info(f"  • {name:<32} [{status}] ({dur}s)")
+    logging.info(f"Total Batch Time: {total_time} seconds ({round(total_time/60, 2)} minutes)")
+    logging.info("=" * 65 + "\n")
+
+
+def get_next_run_time(now=None):
+    """Calculates next 5:00 AM run time on Mon-Sat (skipping Sunday = weekday 6)."""
+    if now is None:
+        now = datetime.now()
+
+    target = now.replace(hour=5, minute=0, second=0, microsecond=0)
+
+    if now >= target:
+        target += timedelta(days=1)
+
+    while target.weekday() == 6:  # Skip Sunday
+        target += timedelta(days=1)
+
+    return target
+
+
+def start_scheduler_thread(python_exec):
+    """Background daemon loop that triggers scrapers every Mon-Sat at 5:00 AM."""
+    days_map = {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Friday", 5: "Saturday", 6: "Sunday"}
+
+    while True:
+        next_run = get_next_run_time()
+        now = datetime.now()
+        seconds_to_wait = (next_run - now).total_seconds()
+        day_name = days_map[next_run.weekday()]
+
+        logging.info(f"[Scheduler] Next scrape scheduled at: {next_run.strftime('%Y-%m-%d %H:%M:%S')} ({day_name})")
+
+        time.sleep(seconds_to_wait)
+        run_all_scrapers(python_exec=python_exec)
+        time.sleep(10)
+
 
 def main():
-    print("=" * 60)
-    print("  StockInsight - Application Launcher")
-    print("  Backend: http://127.0.0.1:2500")
-    print("  Frontend: http://127.0.0.1:2501")
-    print("=" * 60)
+    parser = argparse.ArgumentParser(description="StockInsight Master Application Launcher & Scheduler")
+    parser.add_argument("--scrape-now", action="store_true", help="Run scrapers immediately on startup")
+    parser.add_argument("--no-scheduler", action="store_true", help="Disable the background 5:00 AM daily scraper scheduler")
+    args = parser.parse_args()
 
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # Virtualenv Python Executable resolution
+    print("=" * 65)
+    print("  StockInsight - Master Application Launcher")
+    print("  Backend:  http://127.0.0.1:2500")
+    print("  Frontend: http://127.0.0.1:2501")
+    print("  Scraper:  Daily 05:00 AM (Monday - Saturday, except Sunday)")
+    print("=" * 65)
+
+    base_dir = str(BASE_DIR)
+
+    # Resolve Python virtual environment
     if sys.platform == "win32":
         venv_python = os.path.join(base_dir, "env", "Scripts", "python.exe")
         npm_cmd = "npm.cmd"
@@ -22,22 +164,39 @@ def main():
         npm_cmd = "npm"
 
     if not os.path.exists(venv_python):
-        print(f"Virtualenv not found at {venv_python}. Using current python interpreter: {sys.executable}")
+        print(f"Virtualenv not found at {venv_python}. Using current python: {sys.executable}")
         venv_python = sys.executable
     else:
         print(f"Activated Virtualenv Python: {venv_python}")
 
-    # Ensure backend dependencies are installed in virtualenv
+    # 1. Check backend dependencies
     req_file = os.path.join(base_dir, "backend", "requirements.txt")
     if os.path.exists(req_file):
         print("Checking backend dependencies...")
         subprocess.run([venv_python, "-m", "pip", "install", "-q", "-r", req_file])
 
-    # Check and auto-create PostgreSQL database tables and columns
+    # 2. Verify and auto-create PostgreSQL database tables and columns
     init_db_script = os.path.join(base_dir, "backend", "init_db.py")
     if os.path.exists(init_db_script):
         print("\nVerifying database tables and columns...")
         subprocess.run([venv_python, init_db_script])
+
+    # 3. Optional: Run scrapers immediately if requested
+    if args.scrape_now:
+        print("\n[+] Triggering immediate scrape batch (--scrape-now requested)...")
+        run_all_scrapers(python_exec=venv_python)
+
+    # 4. Start background scraper scheduler thread if enabled
+    if not args.no_scheduler:
+        next_run = get_next_run_time()
+        days_map = {0: "Monday", 1: "Tuesday", 2: "Wednesday", 3: "Thursday", 4: "Friday", 5: "Saturday", 6: "Sunday"}
+        print(f"\n[+] Background Scraper Scheduler: Active (Next run: {next_run.strftime('%Y-%m-%d %H:%M:%S')} {days_map[next_run.weekday()]})")
+        scheduler_thread = threading.Thread(
+            target=start_scheduler_thread,
+            args=(venv_python,),
+            daemon=True
+        )
+        scheduler_thread.start()
 
     backend_app = os.path.join(base_dir, "backend", "app.py")
     frontend_dir = os.path.join(base_dir, "frontend")
@@ -70,8 +229,10 @@ def main():
         )
         processes.append(frontend_proc)
 
-        print("\n[+] Both Backend (Port 2500) and Frontend (Port 2501) are running!")
-        print("[+] Press Ctrl+C to terminate both servers.\n")
+        print("\n[+] StockInsight system fully operational!")
+        print("[+] Backend: http://127.0.0.1:2500")
+        print("[+] Frontend: http://127.0.0.1:2501")
+        print("[+] Press Ctrl+C to stop all services.\n")
 
         # Monitor subprocesses
         while True:
@@ -88,6 +249,7 @@ def main():
             except Exception:
                 pass
         print("[+] StockInsight stopped successfully.")
+
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom scrollbar for sidebar */
+.sidebar-scroll::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background: #333A48;
+  border-radius: 10px;
+}
+
+/* Custom slim scrollbar for tables and modal popups */
+.slim-scroll::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+.slim-scroll::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 10px;
+}
+
+.slim-scroll::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+
+.slim-scroll::-webkit-scrollbar-thumb:hover {
+  background: #9462d2;
+}
+
+.slim-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 #f1f5f9;
+}
+
+/* Active indicator for sidebar */
+.sidebar-active {
+  background-color: #333A48;
+}
+
+/* Chart line simulation style */
+.chart-path {
+  stroke-dasharray: 1000;
+  stroke-dashoffset: 1000;
+  animation: dash 3s linear forwards;
+}
+
+@keyframes dash {
+  to {
+    stroke-dashoffset: 0;
+  }
+}

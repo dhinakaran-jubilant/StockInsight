@@ -154,17 +154,34 @@ def main():
     print("=" * 65)
 
     base_dir = str(BASE_DIR)
+    backend_dir = os.path.join(base_dir, "backend")
 
-    # Resolve Python virtual environment
+    # Resolve Python virtual environment (prioritizes backend/env)
+    possible_venv_paths = [
+        os.path.join(backend_dir, "env"),
+        os.path.join(backend_dir, "venv"),
+        os.path.join(base_dir, "env"),
+        os.path.join(base_dir, "venv"),
+    ]
+
+    venv_python = None
+    for v_path in possible_venv_paths:
+        if sys.platform == "win32":
+            py_bin = os.path.join(v_path, "Scripts", "python.exe")
+        else:
+            py_bin = os.path.join(v_path, "bin", "python")
+
+        if os.path.exists(py_bin):
+            venv_python = py_bin
+            break
+
     if sys.platform == "win32":
-        venv_python = os.path.join(base_dir, "env", "Scripts", "python.exe")
         npm_cmd = "npm.cmd"
     else:
-        venv_python = os.path.join(base_dir, "env", "bin", "python")
         npm_cmd = "npm"
 
-    if not os.path.exists(venv_python):
-        print(f"Virtualenv not found at {venv_python}. Using current python: {sys.executable}")
+    if not venv_python:
+        print(f"Virtualenv not found. Using current python: {sys.executable}")
         venv_python = sys.executable
     else:
         print(f"Activated Virtualenv Python: {venv_python}")

@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-
-const API_BASE = 'http://127.0.0.1:2500/api';
+import { API_BASE } from '../apiConfig';
 
 export const getStoredWatchlistGroups = () => {
 	try {

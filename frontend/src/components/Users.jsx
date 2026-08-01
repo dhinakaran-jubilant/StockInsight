@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom';
-
-const API_BASE = 'http://127.0.0.1:2500/api';
+import { API_BASE } from '../apiConfig';
 
 export default function Users() {
 	const [users, setUsers] = useState([]);

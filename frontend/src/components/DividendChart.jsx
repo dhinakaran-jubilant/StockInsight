@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE } from '../apiConfig';
 
 const getShortSectorName = (name) => {
   if (!name) return '';
@@ -21,7 +22,6 @@ export default function DividendChart() {
   const [hoveredIdx, setHoveredIdx] = useState(null);
 
   useEffect(() => {
-    const API_BASE = 'http://127.0.0.1:2500/api';
     fetch(`${API_BASE}/sectoral?period_type=monthly`)
       .then((res) => res.json())
       .then((data) => {

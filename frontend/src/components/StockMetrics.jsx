@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { API_BASE } from '../apiConfig';
 
 export function StockCard({ name, subtitle, price, change, isPositive, icon, bgColor, tag }) {
   return (
@@ -100,8 +101,6 @@ export default function StockMetrics() {
   ]);
 
   useEffect(() => {
-    const API_BASE = 'http://127.0.0.1:2500/api';
-
     // 1st Card: Fetch Trend Crossover Analysis to find recent Core Crossover with High Prob & Pro Potential
     fetch(`${API_BASE}/trends`)
       .then((res) => res.json())

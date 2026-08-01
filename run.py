@@ -140,18 +140,39 @@ def start_scheduler_thread(python_exec):
         time.sleep(10)
 
 
+def get_local_lan_ip():
+    """Detects primary local LAN IP address (e.g. 192.168.0.7)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
+        s.connect(('8.8.8.8', 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "192.168.0.7"
+
+
 def main():
     parser = argparse.ArgumentParser(description="StockInsight Master Application Launcher & Scheduler")
     parser.add_argument("--scrape-now", action="store_true", help="Run scrapers immediately on startup")
     parser.add_argument("--no-scheduler", action="store_true", help="Disable the background 5:00 AM daily scraper scheduler")
     args = parser.parse_args()
 
-    print("=" * 65)
+    network_ip = get_local_lan_ip()
+
+    print("=" * 68)
     print("  StockInsight - Master Application Launcher")
-    print("  Backend:  http://127.0.0.1:2500")
-    print("  Frontend: http://127.0.0.1:2501")
-    print("  Scraper:  Daily 05:00 AM (Monday - Saturday, except Sunday)")
-    print("=" * 65)
+    print("=" * 68)
+    print("  [Local Access (This Machine)]:")
+    print("    • Frontend UI: http://localhost:2501 (or http://127.0.0.1:2501)")
+    print("    • Backend API: http://localhost:2500 (or http://127.0.0.1:2500)")
+    print("\n  [Network Access (LAN / Other Devices)]:")
+    print(f"    • Frontend UI: http://{network_ip}:2501")
+    print(f"    • Backend API: http://{network_ip}:2500")
+    print("\n  [Scraper Schedule]:")
+    print("    • Daily 05:00 AM (Monday - Saturday, except Sunday)")
+    print("=" * 68)
 
     base_dir = str(BASE_DIR)
     backend_dir = os.path.join(base_dir, "backend")
@@ -247,8 +268,8 @@ def main():
         processes.append(frontend_proc)
 
         print("\n[+] StockInsight system fully operational!")
-        print("[+] Backend: http://127.0.0.1:2500")
-        print("[+] Frontend: http://127.0.0.1:2501")
+        print("  • Local UI:   http://localhost:2501  (Backend API: http://localhost:2500)")
+        print(f"  • Network UI: http://{network_ip}:2501  (Backend API: http://{network_ip}:2500)")
         print("[+] Press Ctrl+C to stop all services.\n")
 
         # Monitor subprocesses

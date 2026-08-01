@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { getStoredWatchlistGroups, saveStoredWatchlistGroups } from './Watchlist';
+import { API_BASE } from '../apiConfig';
 
 const LottieLoader = ({ text = 'Loading data...', width = '96px', height = '96px' }) => (
 	<div className="py-10 text-center text-slate-500 font-medium flex flex-col items-center justify-center gap-2">
@@ -1579,7 +1580,7 @@ export default function Analysis({
 			price: addGlobalPrice.trim() || '—'
 		};
 
-		fetch('http://127.0.0.1:2500/api/global/add', {
+		fetch(`${API_BASE}/global/add`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(payload)
@@ -1667,7 +1668,7 @@ export default function Analysis({
 			price: addCommodityPrice.trim() || '—'
 		};
 
-		fetch('http://127.0.0.1:2500/api/commodity/add', {
+		fetch(`${API_BASE}/commodity/add`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(payload)
@@ -1736,7 +1737,7 @@ export default function Analysis({
 	};
 
 	const fetchLiveWatchlistTickers = () => {
-		fetch('http://127.0.0.1:2500/api/watchlist')
+		fetch(`${API_BASE}/watchlist`)
 			.then((res) => res.json())
 			.then((data) => {
 				if (data) {
@@ -1813,7 +1814,7 @@ export default function Analysis({
 		};
 		setSelectedWatchlistStock(stockData);
 
-		fetch('http://127.0.0.1:2500/api/watchlist')
+		fetch(`${API_BASE}/watchlist`)
 			.then((res) => res.json())
 			.then((data) => {
 				if (data && Array.isArray(data.groups)) {
@@ -1852,7 +1853,7 @@ export default function Analysis({
 			targetGroupName = selectedWatchlistGroupId;
 		}
 
-		fetch('http://127.0.0.1:2500/api/watchlist', {
+		fetch(`${API_BASE}/watchlist`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({
@@ -1889,7 +1890,7 @@ export default function Analysis({
 				return next;
 			});
 
-			fetch('http://127.0.0.1:2500/api/watchlist/remove', {
+			fetch(`${API_BASE}/watchlist/remove`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -1938,7 +1939,6 @@ export default function Analysis({
 		setSectorModalLoading(true);
 		setSectorModalDetails(null);
 
-		const API_BASE = 'http://127.0.0.1:2500/api';
 		fetch(`${API_BASE}/sectoral/history?sector=${encodeURIComponent(sectorObj.sector)}`)
 			.then((res) => res.json())
 			.then((data) => {
@@ -1960,7 +1960,7 @@ export default function Analysis({
 		setOwnershipModalDetails(null);
 
 		if (ticker) {
-			fetch(`http://127.0.0.1:2500/api/ownership/${encodeURIComponent(ticker)}`)
+			fetch(`${API_BASE}/ownership/${encodeURIComponent(ticker)}`)
 				.then((res) => res.json())
 				.then((data) => {
 					if (data && data.details) {
@@ -1989,7 +1989,7 @@ export default function Analysis({
 		setTrendModalDetails(null);
 
 		if (ticker) {
-			fetch(`http://127.0.0.1:2500/api/trends/${encodeURIComponent(ticker)}`)
+			fetch(`${API_BASE}/trends/${encodeURIComponent(ticker)}`)
 				.then((res) => res.json())
 				.then((data) => {
 					if (data && data.history) {
@@ -2015,7 +2015,7 @@ export default function Analysis({
 		setMetricsModalDetails(null);
 
 		if (ticker) {
-			fetch(`http://127.0.0.1:2500/api/metrics/${encodeURIComponent(ticker)}`)
+			fetch(`${API_BASE}/metrics/${encodeURIComponent(ticker)}`)
 				.then((res) => res.json())
 				.then((data) => {
 					if (data) {
@@ -2098,8 +2098,6 @@ export default function Analysis({
 	const [ownershipPeriodType, setOwnershipPeriodType] = useState('Quarterly');
 
 	useEffect(() => {
-		const API_BASE = 'http://127.0.0.1:2500/api';
-
 		// Fetch Trades directly from PostgreSQL Backend Database
 		setLoadingTrades(true);
 		fetch(`${API_BASE}/trades`)
@@ -2193,7 +2191,6 @@ export default function Analysis({
 
 	// Fetch Ownership / Shareholding pattern when period mode changes
 	useEffect(() => {
-		const API_BASE = 'http://127.0.0.1:2500/api';
 		setLoadingOwnership(true);
 		fetch(`${API_BASE}/ownership?period_type=${ownershipPeriodType.toLowerCase()}`)
 			.then((res) => res.json())
@@ -2208,7 +2205,6 @@ export default function Analysis({
 
 	// Fetch Sectoral Activity when period mode changes
 	useEffect(() => {
-		const API_BASE = 'http://127.0.0.1:2500/api';
 		setLoadingSectoral(true);
 		fetch(`${API_BASE}/sectoral?period_type=${sectoralPeriodType.toLowerCase()}`)
 			.then((res) => res.json())
@@ -2224,7 +2220,6 @@ export default function Analysis({
 
 	// Fetch CashFlow from PostgreSQL Backend when period mode changes
 	useEffect(() => {
-		const API_BASE = 'http://127.0.0.1:2500/api';
 		setLoadingCashFlow(true);
 		fetch(`${API_BASE}/cashflow?period_type=${cashFlowPeriodType.toLowerCase()}`)
 			.then((res) => {
@@ -2477,7 +2472,7 @@ export default function Analysis({
 		setModalDetails(null);
 
 		if (ticker) {
-			fetch(`http://127.0.0.1:2500/api/trades/${encodeURIComponent(ticker)}`)
+			fetch(`${API_BASE}/trades/${encodeURIComponent(ticker)}`)
 				.then((res) => res.json())
 				.then((data) => {
 					if (data && data.details) {

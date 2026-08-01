@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom';
-
-const API_BASE = 'http://127.0.0.1:2500/api';
+import { API_BASE } from '../apiConfig';
 
 export default function Navbar({ searchTerm = '', setSearchTerm, activeMenu = 'Analysis', setActiveMenu, activeTab = 'Trades', setActiveTab, userRole = 'Super Admin', setUserRole, onLogout }) {
 	const [isWatchlistOpen, setIsWatchlistOpen] = useState(false);

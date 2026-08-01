@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { API_BASE } from '../apiConfig';
 
 export default function PortfolioChart() {
   const [timeframe, setTimeframe] = useState('Monthly');
@@ -9,7 +10,6 @@ export default function PortfolioChart() {
   const timeframes = ['Daily', 'Monthly', 'Yearly'];
 
   useEffect(() => {
-    const API_BASE = 'http://127.0.0.1:2500/api';
     setLoading(true);
     fetch(`${API_BASE}/cashflow?period_type=${timeframe.toLowerCase()}`)
       .then((res) => res.json())

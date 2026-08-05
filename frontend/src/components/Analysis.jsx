@@ -560,16 +560,16 @@ const TrendPriceDMAChart = ({ history = [], isBreakoutMode = false, isGlobalMode
 									dataSlice[hoveredIdx][l.key] !== undefined &&
 									!isNaN(Number(dataSlice[hoveredIdx][l.key])) &&
 									Number(dataSlice[hoveredIdx][l.key]) > 0 && (
-									<circle
-										cx={getX(hoveredIdx)}
-										cy={getY(dataSlice[hoveredIdx][l.key])}
-										r="2.5"
-										fill="#ffffff"
-										stroke={l.color}
-										strokeWidth="1.5"
-										className="transition-all duration-150 ease-in-out"
-									/>
-								)}
+										<circle
+											cx={getX(hoveredIdx)}
+											cy={getY(dataSlice[hoveredIdx][l.key])}
+											r="2.5"
+											fill="#ffffff"
+											stroke={l.color}
+											strokeWidth="1.5"
+											className="transition-all duration-150 ease-in-out"
+										/>
+									)}
 							</g>
 						);
 					})}
@@ -3537,7 +3537,7 @@ export default function Analysis({
 				</div>
 
 				{/* Tab Content Display */}
-				<div className="w-full overflow-x-auto slim-scroll pb-2">
+				<div className="w-full overflow-x-auto slim-scroll pb-2 mb-5 border-b border-slate-200">
 					{activeTab === 'Sectoral' ? (
 						/* Sectoral Activity View (Pivoted by Period) */
 						<table className="w-full text-left border-collapse">
@@ -4313,8 +4313,8 @@ export default function Analysis({
 																		if (taraTradeYear !== 'All' && t.year !== taraTradeYear) return false;
 																		return true;
 																	}).length === 0 && (
-																		<span className="text-xs text-slate-400 font-normal">—</span>
-																	)}
+																			<span className="text-xs text-slate-400 font-normal">—</span>
+																		)}
 																</div>
 															</td>
 														)}

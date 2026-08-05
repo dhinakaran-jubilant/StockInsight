@@ -125,6 +125,78 @@ export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '',
 	};
 
 	const [currentUserProfile, setCurrentUserProfile] = useState(null);
+	const [timestampsMap, setTimestampsMap] = useState({});
+	const [globalMaxUpdated, setGlobalMaxUpdated] = useState('');
+
+	const fetchLastUpdatedTime = () => {
+		fetch(`${API_BASE}/last-updated`)
+			.then((res) => res.json())
+			.then((data) => {
+				if (data) {
+					if (data.timestamps) setTimestampsMap(data.timestamps);
+					if (data.formatted) setGlobalMaxUpdated(data.formatted);
+				}
+			})
+			.catch((err) => console.error('Error fetching last updated time in Navbar:', err));
+	};
+
+	const getTabContextLabel = () => {
+		const menu = (activeMenu || '').toLowerCase();
+		const tab = (activeTab || 'Trades').toLowerCase();
+
+		if (menu === 'analysis') {
+			if (tab === 'trades') return 'Trades';
+			if (tab === 'ownership') return 'Ownership';
+			if (tab === 'trends') return 'Trends';
+			if (tab === 'breakout' || tab === 'breakouts') return 'Breakout';
+			if (tab === 'metrics') return 'Metrics';
+			if (tab === 'global') return 'Global';
+			if (tab === 'commodity' || tab === 'commodities') return 'Commodities';
+			if (tab === 'sectoral') return 'Sectoral';
+			if (tab === 'cashflow') return 'Cash Flow';
+			return 'Nifty Stocks';
+		} else if (menu.includes('global')) {
+			return 'Global';
+		} else if (menu.includes('commodity')) {
+			return 'Commodities';
+		} else if (menu.includes('sectoral')) {
+			return 'Sectoral';
+		} else if (menu.includes('cashflow') || menu.includes('cash flow')) {
+			return 'Cash Flow';
+		}
+		return 'System';
+	};
+
+	const getDisplayLastUpdated = () => {
+		if (!timestampsMap || Object.keys(timestampsMap).length === 0) {
+			return globalMaxUpdated || 'N/A';
+		}
+
+		const menu = (activeMenu || '').toLowerCase();
+		const tab = (activeTab || 'Trades').toLowerCase();
+
+		if (menu === 'analysis') {
+			if (tab === 'trades') return timestampsMap.trades || 'N/A';
+			if (tab === 'ownership') return timestampsMap.ownership || 'N/A';
+			if (tab === 'trends') return timestampsMap.trends || 'N/A';
+			if (tab === 'breakout' || tab === 'breakouts') return timestampsMap.breakout || 'N/A';
+			if (tab === 'metrics') return timestampsMap.metrics || 'N/A';
+			if (tab === 'global') return timestampsMap.global || 'N/A';
+			if (tab === 'commodity' || tab === 'commodities') return timestampsMap.commodity || 'N/A';
+			if (tab === 'sectoral') return timestampsMap.sectoral || 'N/A';
+			if (tab === 'cashflow') return timestampsMap.cashflow || 'N/A';
+		} else if (menu.includes('global')) {
+			return timestampsMap.global || 'N/A';
+		} else if (menu.includes('commodity')) {
+			return timestampsMap.commodity || 'N/A';
+		} else if (menu.includes('sectoral')) {
+			return timestampsMap.sectoral || 'N/A';
+		} else if (menu.includes('cashflow') || menu.includes('cash flow')) {
+			return timestampsMap.cashflow || 'N/A';
+		}
+
+		return timestampsMap.global_max || globalMaxUpdated || 'N/A';
+	};
 
 	const fetchCurrentUserProfile = () => {
 		fetch(`${API_BASE}/users`)
@@ -153,13 +225,16 @@ export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '',
 
 	useEffect(() => {
 		fetchWatchlistFromDB(true);
+		fetchLastUpdatedTime();
 
 		const handleUpdate = () => {
 			fetchWatchlistFromDB(false);
+			fetchLastUpdatedTime();
 		};
 
 		const handleReopenWatchlist = () => {
 			fetchWatchlistFromDB(false);
+			fetchLastUpdatedTime();
 			setIsWatchlistOpen(true);
 		};
 
@@ -294,6 +369,20 @@ export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '',
 
 			{/* Right Section: Actions & User Profile */}
 			<div className="flex items-center gap-3 sm:gap-4">
+				{/* Last Updated Timestamp Display (Context-aware based on active menu & tab) */}
+				<div
+					className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-50/70 border border-purple-100/80 text-xs shadow-2xs transition-all hover:bg-purple-100/60"
+					title={`Last scraped timestamp for ${getTabContextLabel()} (${getDisplayLastUpdated()})`}
+				>
+					<span className="material-symbols-outlined text-[18px] text-[#9462d2]">schedule</span>
+					<div className="flex flex-col text-left leading-tight gap-[5px]">
+						<span className="text-[9px] uppercase tracking-wider font-extrabold text-slate-400">
+							{getTabContextLabel()} Updated
+						</span>
+						<span className="text-[11px] font-bold text-slate-800 whitespace-nowrap">{getDisplayLastUpdated()}</span>
+					</div>
+				</div>
+
 				{/* Watchlist Icon Button (Only shown if userRole !== 'User') */}
 				{userRole !== 'User' && (
 					<button

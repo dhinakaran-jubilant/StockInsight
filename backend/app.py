@@ -62,6 +62,69 @@ def health_check():
         "database": db_status
     })
 
+@app.route('/api/last-updated', methods=['GET'])
+def get_last_updated():
+    """Return table-specific and overall most recent scraped_at timestamps formatted with AM/PM."""
+    try:
+        conn = get_db_conn()
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    (SELECT MAX(scraped_at) FROM trades) as trades,
+                    (SELECT MAX(scraped_at) FROM shareholding_pattern) as shareholding,
+                    (SELECT MAX(scraped_at) FROM stock_history) as history,
+                    (SELECT MAX(scraped_at) FROM financial_metrics) as metrics,
+                    (SELECT MAX(scraped_at) FROM global_index_history) as global,
+                    (SELECT MAX(scraped_at) FROM commodity_history) as commodities,
+                    (SELECT MAX(scraped_at) FROM sectoral_activity) as sectoral,
+                    (SELECT MAX(scraped_at) FROM fii_dii_cash) as cashflow;
+            """)
+            row = cur.fetchone()
+        conn.close()
+
+        def fmt(dt):
+            if not dt:
+                return "N/A"
+            return dt.strftime("%d %b %Y, %I:%M %p")
+
+        valid_dts = [r for r in row if r is not None] if row else []
+        max_dt = max(valid_dts) if valid_dts else None
+
+        timestamps = {
+            "trades": fmt(row[0] if row else None),
+            "ownership": fmt(row[1] if row else None),
+            "shareholding": fmt(row[1] if row else None),
+            "trends": fmt(row[2] if row else None),
+            "breakouts": fmt(row[2] if row else None),
+            "breakout": fmt(row[2] if row else None),
+            "history": fmt(row[2] if row else None),
+            "metrics": fmt(row[3] if row else None),
+            "global": fmt(row[4] if row else None),
+            "commodity": fmt(row[5] if row else None),
+            "commodities": fmt(row[5] if row else None),
+            "sectoral": fmt(row[6] if row else None),
+            "cashflow": fmt(row[7] if row else None),
+            "global_max": fmt(max_dt)
+        }
+
+        req_table = request.args.get('table', '').lower().strip()
+        if req_table in timestamps:
+            return jsonify({
+                "table": req_table,
+                "formatted": timestamps[req_table]
+            })
+
+        return jsonify({
+            "timestamps": timestamps,
+            "formatted": timestamps["global_max"]
+        })
+    except Exception as e:
+        return jsonify({
+            "timestamps": {},
+            "formatted": "N/A",
+            "error": str(e)
+        }), 500
+
 def normalize_trade_action(raw_action):
     if not raw_action:
         return ""

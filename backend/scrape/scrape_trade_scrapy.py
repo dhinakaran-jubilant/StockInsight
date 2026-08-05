@@ -653,11 +653,13 @@ class ScreenerTradesSpider(scrapy.Spider):
         if cg_records:
             self.logger.info(f"Collected {len(cg_records)} compounded growth records for {ticker}")
 
+        # Save company page data (shareholding, financial metrics, compounded growth) to DB IMMEDIATELY!
+        self.save_company_page_data(ticker, shp_records, fm, cg_records)
+
         # 4. Trades Data Scraping
         trades_url = response.xpath("//button[contains(@data-url, '/trades/')]/@data-url").get()
         if not trades_url:
             self.logger.warning(f"No Trades modal data-url found for: {ticker}")
-            self.save_stock_data(ticker, [], shp_records, fm, cg_records)
             return
 
         full_trades_url = response.urljoin(trades_url)
@@ -666,7 +668,7 @@ class ScreenerTradesSpider(scrapy.Spider):
         yield Request(
             url=full_trades_url,
             callback=self.parse_trades_modal,
-            meta={'ticker': ticker, 'shp': shp_records, 'fm': fm, 'cg': cg_records}
+            meta={'ticker': ticker}
         )
 
     # -----------------------------------------------------------------------
@@ -1118,12 +1120,10 @@ class ScreenerTradesSpider(scrapy.Spider):
                     }
                     stock_trades.append(record)
 
-        cg_records = response.meta.get('cg', [])
-        self.save_stock_data(ticker, stock_trades, shp_records, fm_record, cg_records)
+        self.save_trades_data(ticker, stock_trades)
 
-    def save_stock_data(self, ticker, trades, shp, fm, cg=None):
-        """Save a single stock's scraped records to DB immediately after scraping."""
-        self.scraped_records.extend(trades)
+    def save_company_page_data(self, ticker, shp, fm, cg=None):
+        """Save a single stock's company page records (shareholding, financial metrics, compounded growth) to DB immediately."""
         if shp:
             self.scraped_shp_records.extend(shp)
         if fm:
@@ -1132,13 +1132,29 @@ class ScreenerTradesSpider(scrapy.Spider):
             self.scraped_cg_records.extend(cg)
 
         try:
-            saved_t = save_trades_for_stock(ticker, trades)
             saved_s = save_shp_records_to_db(shp) if shp else 0
             saved_f = save_fm_records_to_db([fm]) if fm else 0
             saved_c = save_cg_records_to_db(cg) if cg else 0
-            self.logger.info(f"[db] Saved {ticker} -> {saved_t} trades, {saved_s} shareholding, {saved_f} financial metrics, {saved_c} compounded growth")
+            self.logger.info(f"[db] Saved {ticker} company data -> {saved_s} shareholding, {saved_f} financial metrics, {saved_c} compounded growth")
         except Exception as e:
-            self.logger.error(f"[db] Error saving data for {ticker}: {e}")
+            self.logger.error(f"[db] Error saving company data for {ticker}: {e}")
+
+    def save_trades_data(self, ticker, trades):
+        """Save a single stock's trades records to DB immediately."""
+        if trades:
+            self.scraped_records.extend(trades)
+
+        try:
+            saved_t = save_trades_for_stock(ticker, trades)
+            self.logger.info(f"[db] Saved {ticker} trades -> {saved_t} trade records")
+        except Exception as e:
+            self.logger.error(f"[db] Error saving trades for {ticker}: {e}")
+
+    def save_stock_data(self, ticker, trades, shp, fm, cg=None):
+        """Save a single stock's scraped records to DB immediately after scraping."""
+        self.save_company_page_data(ticker, shp, fm, cg)
+        if trades is not None:
+            self.save_trades_data(ticker, trades)
 
 
 # ---------------------------------------------------------------------------

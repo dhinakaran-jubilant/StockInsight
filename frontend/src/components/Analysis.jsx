@@ -2040,7 +2040,7 @@ export default function Analysis({
 		const isGlobalOrCommodity = activeTab === 'Global' || activeTab === 'Commodity';
 		const sections = isGlobalOrCommodity
 			? ['Trends', 'Breakout']
-			: ['Trades', 'Ownership', 'Trends', 'Breakout', 'Metrics', 'Tara'];
+			: ['Trades', 'Ownership', 'Trends', 'Breakout', 'Metrics'];
 		let targetSection = target;
 		if (target === 'next' || target === 'prev') {
 			const currIndex = sections.indexOf(currentSection);
@@ -4850,7 +4850,7 @@ export default function Analysis({
 					{/* Left Move Icon (<) */}
 					<button
 						onClick={() => handleNavigateStockSection(selectedTradeStock, 'Trades', 'prev')}
-						title="Move to Previous Section (Breakout Analysis)"
+						title="Move to Previous Section (Financial Metrics)"
 						className="absolute left-6 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/95 hover:bg-white shadow-2xl border border-slate-200 text-slate-700 hover:text-[#9462d2] hover:border-purple-300 flex items-center justify-center transition-all cursor-pointer z-[10000] hover:scale-110 active:scale-95 group"
 					>
 						<span className="material-symbols-outlined text-[30px] group-hover:-translate-x-0.5 transition-transform">chevron_left</span>
@@ -5246,7 +5246,7 @@ export default function Analysis({
 									? 'Move to Next Section (Trends Price DMA Chart)'
 									: 'Move to Next Section (Breakout Analysis)'
 								: isBreakoutModal
-									? 'Move to Next Section (Trades Details)'
+									? 'Move to Next Section (Financial Metrics)'
 									: 'Move to Next Section (Breakout Analysis)'
 						}
 						className="absolute right-6 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/95 hover:bg-white shadow-2xl border border-slate-200 text-slate-700 hover:text-[#9462d2] hover:border-purple-300 flex items-center justify-center transition-all cursor-pointer z-[10000] hover:scale-110 active:scale-95 group"

@@ -462,24 +462,29 @@ def get_ownership():
         conn = get_db_conn()
         with conn.cursor() as cur:
             cur.execute("""
-                WITH ranked_sp AS (
-                    SELECT DISTINCT ON (symbol, period)
-                        symbol, period, promoters, fiis, diis, public, id
+                WITH symbols_list AS (
+                    SELECT DISTINCT UPPER(symbol) as symbol FROM shareholding_pattern
+                    UNION
+                    SELECT DISTINCT UPPER(symbol) as symbol FROM nifty_750
+                ),
+                ranked_sp AS (
+                    SELECT DISTINCT ON (UPPER(symbol), period)
+                        UPPER(symbol) as symbol, period, promoters, fiis, diis, public, id, market_cap
                     FROM shareholding_pattern
                     WHERE LOWER(period_type) = %s
-                    ORDER BY symbol, period, id DESC
+                    ORDER BY UPPER(symbol), period, id DESC
                 ),
                 numbered_sp AS (
                     SELECT 
-                        symbol, period, promoters, fiis, diis, public,
+                        symbol, period, promoters, fiis, diis, public, market_cap,
                         ROW_NUMBER() OVER (PARTITION BY symbol ORDER BY id DESC) as rn
                     FROM ranked_sp
                 )
                 SELECT 
-                    t.symbol,
-                    COALESCE(n.stock_name, t.symbol) as stock_name,
-                    COALESCE(NULLIF(n.market_cap, ''), s.market_cap, '') as market_cap,
-                    COALESCE(NULLIF(n.price, ''), MAX(t.price)) as price,
+                    s.symbol,
+                    COALESCE(n.stock_name, s.symbol) as stock_name,
+                    COALESCE(NULLIF(n.market_cap, ''), p1.market_cap, '') as market_cap,
+                    COALESCE(NULLIF(n.price, ''), t.price, '') as price,
                     
                     p1.period as curr_period,
                     p2.period as prev_period,
@@ -488,19 +493,17 @@ def get_ownership():
                     p1.diis as curr_dii, p2.diis as prev_dii,
                     p1.public as curr_pub, p2.public as prev_pub
 
-                FROM trades t
-                LEFT JOIN nifty_750 n ON UPPER(t.symbol) = UPPER(n.symbol)
+                FROM symbols_list s
+                LEFT JOIN nifty_750 n ON s.symbol = UPPER(n.symbol)
                 LEFT JOIN (
-                    SELECT DISTINCT ON (symbol) symbol, market_cap
-                    FROM shareholding_pattern
-                    ORDER BY symbol, id DESC
-                ) s ON UPPER(t.symbol) = UPPER(s.symbol)
-                LEFT JOIN numbered_sp p1 ON t.symbol = p1.symbol AND p1.rn = 1
-                LEFT JOIN numbered_sp p2 ON t.symbol = p2.symbol AND p2.rn = 2
-                GROUP BY t.symbol, n.stock_name, n.market_cap, s.market_cap, n.price, p1.period, p2.period,
-                         p1.promoters, p2.promoters, p1.fiis, p2.fiis,
-                         p1.diis, p2.diis, p1.public, p2.public
-                ORDER BY COALESCE(n.stock_name, t.symbol) ASC;
+                    SELECT DISTINCT ON (UPPER(symbol)) UPPER(symbol) as symbol, price
+                    FROM trades
+                    WHERE price IS NOT NULL AND price != ''
+                    ORDER BY UPPER(symbol), id DESC
+                ) t ON s.symbol = t.symbol
+                INNER JOIN numbered_sp p1 ON s.symbol = p1.symbol AND p1.rn = 1
+                LEFT JOIN numbered_sp p2 ON s.symbol = p2.symbol AND p2.rn = 2
+                ORDER BY COALESCE(n.stock_name, s.symbol) ASC;
             """, (period_type,))
             rows = cur.fetchall()
         conn.close()
@@ -599,20 +602,28 @@ def get_trends():
         with conn.cursor() as cur:
             # Query stock basic details
             cur.execute("""
+                WITH symbols_list AS (
+                    SELECT DISTINCT UPPER(symbol) as symbol FROM stock_history
+                )
                 SELECT 
-                    t.symbol,
-                    COALESCE(n.stock_name, t.symbol) as stock_name,
-                    COALESCE(s.market_cap, '') as market_cap,
-                    MAX(t.price) FILTER (WHERE t.price IS NOT NULL AND t.price != '') as price
-                FROM trades t
-                LEFT JOIN nifty_750 n ON t.symbol = n.symbol
+                    s.symbol,
+                    COALESCE(n.stock_name, s.symbol) as stock_name,
+                    COALESCE(NULLIF(n.market_cap, ''), sh.market_cap, '') as market_cap,
+                    COALESCE(NULLIF(n.price, ''), t.price, '') as price
+                FROM symbols_list s
+                LEFT JOIN nifty_750 n ON s.symbol = UPPER(n.symbol)
                 LEFT JOIN (
-                    SELECT DISTINCT ON (symbol) symbol, market_cap
+                    SELECT DISTINCT ON (UPPER(symbol)) UPPER(symbol) as symbol, market_cap
                     FROM shareholding_pattern
-                    ORDER BY symbol, id DESC
-                ) s ON t.symbol = s.symbol
-                GROUP BY t.symbol, n.stock_name, s.market_cap
-                ORDER BY COALESCE(n.stock_name, t.symbol) ASC;
+                    ORDER BY UPPER(symbol), id DESC
+                ) sh ON s.symbol = sh.symbol
+                LEFT JOIN (
+                    SELECT DISTINCT ON (UPPER(symbol)) UPPER(symbol) as symbol, price
+                    FROM trades
+                    WHERE price IS NOT NULL AND price != ''
+                    ORDER BY UPPER(symbol), id DESC
+                ) t ON s.symbol = t.symbol
+                ORDER BY COALESCE(n.stock_name, s.symbol) ASC;
             """)
             stock_rows = cur.fetchall()
 
@@ -794,20 +805,24 @@ def get_stock_trend_chart(symbol):
             # Query stock info
             cur.execute("""
                 SELECT 
-                    t.symbol,
-                    COALESCE(n.stock_name, t.symbol) as stock_name,
-                    COALESCE(s.market_cap, '') as market_cap,
-                    MAX(t.price) FILTER (WHERE t.price IS NOT NULL AND t.price != '') as price
-                FROM trades t
-                LEFT JOIN nifty_750 n ON UPPER(t.symbol) = UPPER(n.symbol)
+                    UPPER(%s) as symbol,
+                    COALESCE(n.stock_name, UPPER(%s)) as stock_name,
+                    COALESCE(NULLIF(n.market_cap, ''), s.market_cap, '') as market_cap,
+                    COALESCE(NULLIF(n.price, ''), t.price, '') as price
+                FROM (SELECT UPPER(%s) as symbol) req
+                LEFT JOIN nifty_750 n ON req.symbol = UPPER(n.symbol)
                 LEFT JOIN (
-                    SELECT DISTINCT ON (symbol) symbol, market_cap
+                    SELECT DISTINCT ON (UPPER(symbol)) UPPER(symbol) as symbol, market_cap
                     FROM shareholding_pattern
-                    ORDER BY symbol, id DESC
-                ) s ON UPPER(t.symbol) = UPPER(s.symbol)
-                WHERE UPPER(t.symbol) = UPPER(%s)
-                GROUP BY t.symbol, n.stock_name, s.market_cap;
-            """, (symbol,))
+                    ORDER BY UPPER(symbol), id DESC
+                ) s ON req.symbol = s.symbol
+                LEFT JOIN (
+                    SELECT DISTINCT ON (UPPER(symbol)) UPPER(symbol) as symbol, price
+                    FROM trades
+                    WHERE price IS NOT NULL AND price != ''
+                    ORDER BY UPPER(symbol), id DESC
+                ) t ON req.symbol = t.symbol;
+            """, (symbol, symbol, symbol))
             stock_row = cur.fetchone()
 
             # Query historical close prices, volume, and calculated DMAs
@@ -1012,20 +1027,28 @@ def get_breakouts():
         with conn.cursor() as cur:
             # Query stock basic details
             cur.execute("""
+                WITH symbols_list AS (
+                    SELECT DISTINCT UPPER(symbol) as symbol FROM stock_history
+                )
                 SELECT 
-                    t.symbol,
-                    COALESCE(n.stock_name, t.symbol) as stock_name,
-                    COALESCE(s.market_cap, '') as market_cap,
-                    MAX(t.price) FILTER (WHERE t.price IS NOT NULL AND t.price != '') as price
-                FROM trades t
-                LEFT JOIN nifty_750 n ON t.symbol = n.symbol
+                    s.symbol,
+                    COALESCE(n.stock_name, s.symbol) as stock_name,
+                    COALESCE(NULLIF(n.market_cap, ''), sh.market_cap, '') as market_cap,
+                    COALESCE(NULLIF(n.price, ''), t.price, '') as price
+                FROM symbols_list s
+                LEFT JOIN nifty_750 n ON s.symbol = UPPER(n.symbol)
                 LEFT JOIN (
-                    SELECT DISTINCT ON (symbol) symbol, market_cap
+                    SELECT DISTINCT ON (UPPER(symbol)) UPPER(symbol) as symbol, market_cap
                     FROM shareholding_pattern
-                    ORDER BY symbol, id DESC
-                ) s ON t.symbol = s.symbol
-                GROUP BY t.symbol, n.stock_name, s.market_cap
-                ORDER BY COALESCE(n.stock_name, t.symbol) ASC;
+                    ORDER BY UPPER(symbol), id DESC
+                ) sh ON s.symbol = sh.symbol
+                LEFT JOIN (
+                    SELECT DISTINCT ON (UPPER(symbol)) UPPER(symbol) as symbol, price
+                    FROM trades
+                    WHERE price IS NOT NULL AND price != ''
+                    ORDER BY UPPER(symbol), id DESC
+                ) t ON s.symbol = t.symbol
+                ORDER BY COALESCE(n.stock_name, s.symbol) ASC;
             """)
             stock_rows = cur.fetchall()
 

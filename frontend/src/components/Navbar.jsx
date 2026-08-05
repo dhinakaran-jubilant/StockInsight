@@ -73,12 +73,12 @@ export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '',
 
 	const handleStockClick = (item, e) => {
 		if (e) e.stopPropagation();
-		const symbol = item.ticker || item.symbol || item.stockName || '';
-		if (setSearchTerm) setSearchTerm(symbol);
+		const stockObj = (item && item.stock) ? item.stock : item;
+		const symbol = (typeof stockObj === 'string' ? stockObj : (stockObj?.ticker || stockObj?.symbol || stockObj?.stockName || stockObj?.name || '')).toString().trim();
 		if (setActiveTab) setActiveTab('Trades');
 		if (setActiveMenu) setActiveMenu('Analysis');
 		setIsWatchlistOpen(false);
-		window.dispatchEvent(new CustomEvent('openStockTradeDetails', { detail: { stock: { ...item, ticker: symbol } } }));
+		window.dispatchEvent(new CustomEvent('openStockTradeDetails', { detail: { stock: { ...(typeof stockObj === 'object' ? stockObj : {}), ticker: symbol }, openedFromWatchlist: true } }));
 	};
 
 	const toggleGroupFilter = (groupName) => {

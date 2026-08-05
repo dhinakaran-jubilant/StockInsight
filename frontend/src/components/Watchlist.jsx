@@ -33,11 +33,11 @@ export default function Watchlist({ setActiveMenu, setActiveTab, setSearchTerm }
 	const [isAddingStockInline, setIsAddingStockInline] = useState(false);
 
 	const handleStockClick = (item) => {
-		const symbol = item.ticker || item.symbol || item.stockName || '';
-		if (setSearchTerm) setSearchTerm(symbol);
+		const stockObj = (item && item.stock) ? item.stock : item;
+		const symbol = (typeof stockObj === 'string' ? stockObj : (stockObj?.ticker || stockObj?.symbol || stockObj?.stockName || stockObj?.name || '')).toString().trim();
 		if (setActiveTab) setActiveTab('Trades');
 		if (setActiveMenu) setActiveMenu('Analysis');
-		window.dispatchEvent(new CustomEvent('openStockTradeDetails', { detail: { stock: { ...item, ticker: symbol } } }));
+		window.dispatchEvent(new CustomEvent('openStockTradeDetails', { detail: { stock: { ...(typeof stockObj === 'object' ? stockObj : {}), ticker: symbol }, openedFromWatchlist: true } }));
 	};
 
 	const fetchWatchlistFromDB = () => {
@@ -197,7 +197,7 @@ export default function Watchlist({ setActiveMenu, setActiveTab, setSearchTerm }
 				<>
 					{/* Watchlist Stock Items List */}
 					{displayedItems.length > 0 ? (
-						<div className="space-y-3">
+						<div className="max-h-[380px] overflow-y-auto slim-scroll space-y-3 pr-1">
 							{displayedItems.map((item, index) => (
 								<div
 									key={`${item.ticker}_${item.groupName}_${index}`}

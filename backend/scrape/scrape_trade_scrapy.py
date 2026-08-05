@@ -41,7 +41,7 @@ DB_CONFIG = {
 }
 
 SCREENER_USER = os.environ.get("SCREENER_USER", "supportdeskjubilant@gmail.com")
-SCREENER_PASS = os.environ.get("SCREENER_PASS", "")
+SCREENER_PASS = os.environ.get("SCREENER_PASS", "Jubi@2026")
 
 CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS trades (
@@ -709,9 +709,9 @@ class ScreenerTradesSpider(scrapy.Spider):
                 continue
             lbl = clean_label(tds[0])
             vals = [td.xpath("string()").get("").strip() for td in tds[1:]]
-            if lbl == "sales":
+            if lbl == "sales" or lbl == "revenue":
                 row_data["sales"] = vals
-            elif lbl == "operating profit":
+            elif lbl == "operating profit" or lbl == "financing profit":
                 row_data["opm"] = vals
 
         result = {}
@@ -775,13 +775,13 @@ class ScreenerTradesSpider(scrapy.Spider):
                 continue
             lbl = clean_label(tds[0])
             vals = [td.xpath("string()").get("").strip() for td in tds[1:]]
-            if lbl == "sales":
+            if lbl == "sales" or lbl == "revenue":
                 row_data["sales"] = vals
-            elif lbl == "opm %":
+            elif lbl == "opm %" or lbl == "financing margin %":
                 row_data["opm"] = vals
             elif lbl == "net profit":
                 row_data["profit"] = vals
-            elif lbl == "operating profit":
+            elif lbl == "operating profit" or lbl == "financing profit":
                 row_data["operating_profit"] = vals
 
         sales            = row_data.get("sales", [])

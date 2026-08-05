@@ -70,15 +70,18 @@ def resolve_venv_python():
     return sys.executable
 
 
-def run_all_scrapers(python_exec=None):
-    """Executes all 6 scrapers sequentially in order."""
+def run_all_scrapers(python_exec=None, company=None):
+    """Executes scrapers sequentially in order (with optional single company filtering)."""
     if python_exec is None:
         python_exec = resolve_venv_python()
 
     start_all = time.time()
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     logging.info("=" * 65)
-    logging.info(f"STARTING DAILY SCRAPE BATCH AT {now_str}")
+    if company:
+        logging.info(f"STARTING SCRAPE BATCH FOR COMPANY: {company.upper()} AT {now_str}")
+    else:
+        logging.info(f"STARTING DAILY SCRAPE BATCH AT {now_str}")
     logging.info("=" * 65)
 
     summary = []
@@ -90,12 +93,16 @@ def run_all_scrapers(python_exec=None):
             summary.append((script_name, "FAILED (Not Found)", 0))
             continue
 
-        logging.info(f"\n---> [{index}/{len(SCRAPERS)}] Running: {script_name}...")
+        cmd = [python_exec, str(script_path)]
+        if company and script_name in ["scrape_trade_scrapy.py", "scrape_historical.py"]:
+            cmd.extend(["--company", company.upper()])
+
+        logging.info(f"\n---> [{index}/{len(SCRAPERS)}] Running: {script_name}{' (--company ' + company.upper() + ')' if company and script_name in ['scrape_trade_scrapy.py', 'scrape_historical.py'] else ''}...")
         t_start = time.time()
 
         try:
             subprocess.run(
-                [python_exec, str(script_path)],
+                cmd,
                 cwd=str(SCRAPE_DIR),
                 capture_output=False,
                 text=True,
@@ -169,15 +176,16 @@ def start_scheduler_loop(python_exec=None):
 
 def main():
     parser = argparse.ArgumentParser(description="StockInsight Scraper Scheduler & Executor")
-    parser.add_argument("--now", action="store_true", help="Run all 6 scrapers immediately right now")
-    parser.add_argument("--schedule", action="store_true", help="Continue running the 5:00 AM daily scheduler after --now batch completes")
+    parser.add_argument("--now", action="store_true", help="Run scrapers immediately right now")
+    parser.add_argument("--company", default=None, help="Specific company/stock ticker (e.g. RELIANCE, BHARATFORG)")
+    parser.add_argument("--schedule", action="store_true", help="Continue running the 5:00 AM daily scheduler after batch completes")
     args = parser.parse_args()
 
     python_exec = resolve_venv_python()
 
-    if args.now:
-        logging.info("[+] Executing immediate scraper batch...")
-        run_all_scrapers(python_exec=python_exec)
+    if args.now or args.company:
+        logging.info(f"[+] Executing immediate scraper batch{' for company ' + args.company.upper() if args.company else ''}...")
+        run_all_scrapers(python_exec=python_exec, company=args.company)
 
         if args.schedule:
             logging.info("[+] Starting 5:00 AM daily scraper scheduler loop...")

@@ -332,6 +332,11 @@ def main():
         help="Single NSE ticker to fetch (e.g. RELIANCE). Skips nifty_750 batch."
     )
     parser.add_argument(
+        "--company",
+        default=None,
+        help="Single NSE ticker to fetch (e.g. RELIANCE). Alias for --ticker."
+    )
+    parser.add_argument(
         "--period",
         default=DEFAULT_PERIOD,
         help="yfinance period string: 1y, 2y, 5y, ytd, max ... (default: 1y)"
@@ -343,15 +348,15 @@ def main():
         help="Parallel worker threads for batch mode (default: 4)"
     )
     args = parser.parse_args()
+    target_ticker = args.ticker or args.company
 
     # -- Connect and ensure table --------------------------------------------
     conn = get_db_conn()
     ensure_table(conn)
-    truncate_stock_history(conn)
 
     # -- Single-ticker mode --------------------------------------------------
-    if args.ticker:
-        symbol    = args.ticker.upper()
+    if target_ticker:
+        symbol    = target_ticker.upper()
         yf_ticker = symbol + EXCHANGE_SUFFIX
         print(f"\n[single] Fetching {args.period} history for {yf_ticker} ...")
         rows = fetch_history(symbol, yf_ticker, args.period)
@@ -360,6 +365,8 @@ def main():
         conn.close()
         print("\nDone.")
         return
+
+    truncate_stock_history(conn)
 
     # -- Batch mode: all stocks from nifty_750 --------------------------------
     tickers = fetch_tickers_from_db()

@@ -39,7 +39,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
-DEFAULT_PERIOD  = "1y"   # yfinance period string: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max
+DEFAULT_PERIOD  = "5y"   # yfinance period string: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max
 DEFAULT_WORKERS = 4      # parallel workers for batch fetching
 
 # NSE tickers in yfinance require a ".NS" suffix (e.g. "RELIANCE.NS")

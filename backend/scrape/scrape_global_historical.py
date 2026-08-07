@@ -24,7 +24,7 @@ except ImportError:
     print("[error] yfinance not installed. Run: pip install yfinance")
     raise
 
-DEFAULT_PERIOD  = "1y"
+DEFAULT_PERIOD  = "5y"
 DEFAULT_WORKERS = 4
 
 DB_CONFIG = {

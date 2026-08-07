@@ -77,7 +77,8 @@ def get_last_updated():
                     (SELECT MAX(scraped_at) FROM global_index_history) as global,
                     (SELECT MAX(scraped_at) FROM commodity_history) as commodities,
                     (SELECT MAX(scraped_at) FROM sectoral_activity) as sectoral,
-                    (SELECT MAX(scraped_at) FROM fii_dii_cash) as cashflow;
+                    (SELECT MAX(scraped_at) FROM fii_dii_cash) as cashflow,
+                    (SELECT MAX(scraped_at) FROM consensus_recommendations) as recommendations;
             """)
             row = cur.fetchone()
         conn.close()
@@ -104,6 +105,7 @@ def get_last_updated():
             "commodities": fmt(row[5] if row else None),
             "sectoral": fmt(row[6] if row else None),
             "cashflow": fmt(row[7] if row else None),
+            "recommendations": fmt(row[8] if row else None),
             "global_max": fmt(max_dt)
         }
 
@@ -1566,6 +1568,81 @@ def add_global_index():
     except Exception as e:
         return jsonify({"status": "success", "message": "Saved locally", "note": str(e)}), 200
 
+@app.route('/api/recommendations', methods=['GET'])
+def get_consensus_recommendations():
+    """Return all consensus recommendations joined with stock_name from nifty_750."""
+    try:
+        conn = get_db_conn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT 
+                    c.id,
+                    c.symbol,
+                    COALESCE(n.stock_name, c.symbol) as stock_name,
+                    c.total,
+                    c.strong_buy,
+                    c.buy,
+                    c.hold,
+                    c.sell,
+                    c.strong_sell,
+                    c.consensus_rating,
+                    c.target_mean_price,
+                    c.target_high_price,
+                    c.target_low_price,
+                    c.scraped_at
+                FROM consensus_recommendations c
+                LEFT JOIN nifty_750 n ON UPPER(c.symbol) = UPPER(n.symbol)
+                ORDER BY COALESCE(n.stock_name, c.symbol) ASC;
+            """)
+            rows = cur.fetchall()
+        conn.close()
+
+        for r in rows:
+            if r.get('scraped_at'):
+                r['scraped_at'] = r['scraped_at'].strftime("%d %b %Y, %I:%M %p")
+
+        return jsonify({"recommendations": rows, "count": len(rows)})
+    except Exception as e:
+        return jsonify({"error": str(e), "recommendations": []}), 500
+
+
+@app.route('/api/recommendations/<symbol>', methods=['GET'])
+def get_symbol_consensus_recommendations(symbol):
+    """Return consensus recommendation for a specific stock symbol."""
+    try:
+        conn = get_db_conn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT 
+                    c.id,
+                    c.symbol,
+                    COALESCE(n.stock_name, c.symbol) as stock_name,
+                    c.total,
+                    c.strong_buy,
+                    c.buy,
+                    c.hold,
+                    c.sell,
+                    c.strong_sell,
+                    c.consensus_rating,
+                    c.target_mean_price,
+                    c.target_high_price,
+                    c.target_low_price,
+                    c.scraped_at
+                FROM consensus_recommendations c
+                LEFT JOIN nifty_750 n ON UPPER(c.symbol) = UPPER(n.symbol)
+                WHERE UPPER(c.symbol) = UPPER(%s);
+            """, (symbol,))
+            row = cur.fetchone()
+        conn.close()
+
+        if row and row.get('scraped_at'):
+            row['scraped_at'] = row['scraped_at'].strftime("%d %b %Y, %I:%M %p")
+
+        return jsonify(row or {})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/metrics', methods=['GET'])
 def get_financial_metrics():
     """Return financial_metrics table joined with stock name, market cap, and price."""
@@ -2034,7 +2111,7 @@ def get_watchlist_api():
 
 @app.route('/api/watchlist', methods=['POST'])
 def add_to_watchlist_api():
-    """Add a stock item to a watchlist group in DB."""
+    """Add a stock item to one or multiple watchlist groups in DB."""
     try:
         data = request.get_json() or {}
         symbol = data.get('ticker') or data.get('symbol')
@@ -2042,31 +2119,40 @@ def add_to_watchlist_api():
             return jsonify({"error": "Symbol is required"}), 400
 
         stock_name = data.get('stockName') or symbol
-        group_name = data.get('groupName') or 'General'
         price = data.get('price') or '—'
         market_cap = data.get('marketCap') or '—'
         change = data.get('change') or '+0.00%'
 
+        group_names = data.get('groupNames')
+        if not group_names or not isinstance(group_names, list):
+            group_name = data.get('groupName') or 'General'
+            group_names = [group_name]
+
         conn = get_db_conn()
         with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO watchlist_groups (name)
-                VALUES (%s)
-                ON CONFLICT (name) DO NOTHING;
-            """, (group_name.strip(),))
+            for g_name in group_names:
+                if not g_name or not str(g_name).strip():
+                    continue
+                clean_gname = str(g_name).strip()
+                cur.execute("""
+                    INSERT INTO watchlist_groups (name)
+                    VALUES (%s)
+                    ON CONFLICT (name) DO NOTHING;
+                """, (clean_gname,))
 
-            cur.execute("""
-                INSERT INTO watchlist (symbol, stock_name, group_name, price, market_cap, change)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (symbol, group_name) DO UPDATE
-                SET price = EXCLUDED.price,
-                    market_cap = EXCLUDED.market_cap,
-                    change = EXCLUDED.change;
-            """, (symbol.strip(), stock_name.strip(), group_name.strip(), price, market_cap, change))
+                cur.execute("""
+                    INSERT INTO watchlist (symbol, stock_name, group_name, price, market_cap, change)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (symbol, group_name) DO UPDATE
+                    SET price = EXCLUDED.price,
+                        market_cap = EXCLUDED.market_cap,
+                        change = EXCLUDED.change;
+                """, (symbol.strip(), stock_name.strip(), clean_gname, price, market_cap, change))
             conn.commit()
         conn.close()
 
-        return jsonify({"status": "success", "message": f"Added {symbol} to {group_name}"})
+        joined_names = ", ".join([str(g).strip() for g in group_names if str(g).strip()])
+        return jsonify({"status": "success", "message": f"Added {symbol} to {joined_names}"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

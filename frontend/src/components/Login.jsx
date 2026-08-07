@@ -58,7 +58,7 @@ export default function Login({ onLoginSuccess }) {
 			<div className="absolute -bottom-32 -left-32 w-96 h-96 bg-indigo-300/20 rounded-full blur-3xl pointer-events-none"></div>
 
 			{/* Main Split-Screen Login Card */}
-			<div className="max-w-5xl w-full bg-white rounded-[36px] shadow-2xl border border-slate-100 p-4 sm:p-6 md:p-8 flex flex-col md:flex-row gap-6 md:gap-10 items-stretch relative z-10 animate-in fade-in zoom-in-95 duration-300">
+			<div className="max-w-5xl w-full max-h-[calc(100vh-30px)] bg-white rounded-[36px] shadow-2xl border border-slate-100 p-4 sm:p-6 md:p-8 flex flex-col md:flex-row gap-6 md:gap-10 items-stretch relative z-10 animate-in fade-in zoom-in-95 duration-300">
 				
 				{/* Left Side: Brand Banner with Chess Background Image & Text Overlay */}
 				<div className="w-full md:w-1/2 rounded-[48px] p-10 text-white flex flex-col justify-between relative overflow-hidden shadow-lg shadow-purple-500/20 min-h-[440px] md:min-h-[540px]">

@@ -1274,13 +1274,17 @@ export default function Analysis({
 			icon: <span className="material-symbols-outlined text-[20px] leading-none select-none">equalizer</span>
 		},
 		{
+			name: 'Consensus',
+			icon: <span className="material-symbols-outlined text-[20px] leading-none select-none">thumbs_up_down</span>
+		},
+		{
 			name: 'Tara',
 			icon: <span className="material-symbols-outlined text-[20px] leading-none select-none">webhook</span>
 		}
 	];
 	const tabs = niftyTabs;
 
-	const isNiftyView = ['Trades', 'Ownership', 'Trends', 'Breakout', 'Metrics', 'Tara'].includes(activeTab);
+	const isNiftyView = ['Trades', 'Ownership', 'Trends', 'Breakout', 'Metrics', 'Consensus', 'Tara'].includes(activeTab);
 
 	const displayBreadcrumbs = isNiftyView
 		? ['Stock Insight', 'Analysis', 'Nifty Stocks', activeTab]
@@ -1447,6 +1451,7 @@ export default function Analysis({
 	const [globalData, setGlobalData] = useState([]);
 	const [commodityData, setCommodityData] = useState([]);
 	const [metricsData, setMetricsData] = useState([]);
+	const [consensusData, setConsensusData] = useState([]);
 	const [loadingTrades, setLoadingTrades] = useState(true);
 	const [loadingOwnership, setLoadingOwnership] = useState(true);
 	const [loadingTrends, setLoadingTrends] = useState(true);
@@ -1454,6 +1459,7 @@ export default function Analysis({
 	const [loadingGlobal, setLoadingGlobal] = useState(true);
 	const [loadingCommodity, setLoadingCommodity] = useState(true);
 	const [loadingMetrics, setLoadingMetrics] = useState(true);
+	const [loadingConsensus, setLoadingConsensus] = useState(true);
 	const [sectoralPeriodType, setSectoralPeriodType] = useState('Fortnightly');
 	const [sectoralData, setSectoralData] = useState([]);
 	const [sectoralPeriods, setSectoralPeriods] = useState([]);
@@ -1531,16 +1537,48 @@ export default function Analysis({
 		setSelectedCashFlowItem(item);
 	};
 
+	// Modal State for Detailed Consensus Recommendations Popup
+	const [selectedConsensusStock, setSelectedConsensusStock] = useState(null);
+
+	const handleConsensusRowClick = (item) => {
+		if (!item) return;
+		const ticker = item.ticker || item.symbol || item.stockName || '';
+		const matchedInMetrics = (metricsData || []).find(
+			(m) => m.ticker && ticker && m.ticker.toUpperCase() === ticker.toUpperCase()
+		);
+		const stockItem = matchedInMetrics ? { ...matchedInMetrics, ...item, ticker } : { ...item, ticker };
+		setSelectedConsensusStock(stockItem);
+	};
+
+	const handleCloseStockModal = (setter) => {
+		if (typeof setter === 'function') {
+			setter(null);
+		}
+	};
+
 	// Modal State for Add to Watchlist Group
 	const [isAddToWatchlistOpen, setIsAddToWatchlistOpen] = useState(false);
 	const [selectedWatchlistStock, setSelectedWatchlistStock] = useState(null);
-	const [selectedWatchlistGroupId, setSelectedWatchlistGroupId] = useState('');
+	const [selectedWatchlistGroupIds, setSelectedWatchlistGroupIds] = useState([]);
 	const [createNewGroupInput, setCreateNewGroupInput] = useState('');
 	const [isCreatingNewGroupMode, setIsCreatingNewGroupMode] = useState(false);
 	const [watchlistSuccessMsg, setWatchlistSuccessMsg] = useState('');
 	const [dbWatchlistTickers, setDbWatchlistTickers] = useState(new Set());
 	const [dbWatchlistGroupsList, setDbWatchlistGroupsList] = useState([]);
+	const [dbWatchlistItems, setDbWatchlistItems] = useState([]);
 	const [isModalGroupDropdownOpen, setIsModalGroupDropdownOpen] = useState(false);
+
+	const toggleWatchlistGroupSelection = (groupName) => {
+		if (!groupName) return;
+		setSelectedWatchlistGroupIds((prev) => {
+			const exists = prev.some((name) => name.toLowerCase() === groupName.toLowerCase());
+			if (exists) {
+				return prev.filter((name) => name.toLowerCase() !== groupName.toLowerCase());
+			} else {
+				return [...prev, groupName];
+			}
+		});
+	};
 
 	// Modal State for Add Commodity
 	const [isAddCommodityOpen, setIsAddCommodityOpen] = useState(false);
@@ -1743,6 +1781,7 @@ export default function Analysis({
 				if (data) {
 					const newSet = new Set();
 					if (Array.isArray(data.items)) {
+						setDbWatchlistItems(data.items);
 						data.items.forEach((item) => {
 							if (item.ticker) newSet.add(item.ticker.toUpperCase());
 							if (item.symbol) newSet.add(item.symbol.toUpperCase());
@@ -1782,8 +1821,8 @@ export default function Analysis({
 	// Track if stock modal was opened from Watchlist navigation
 	const [openedFromWatchlist, setOpenedFromWatchlist] = useState(false);
 
-	const handleCloseStockModal = (setter) => {
-		setter(null);
+	const handleCloseStockDetailsModal = () => {
+		setSelectedTradeStock(null);
 		if (openedFromWatchlist) {
 			setOpenedFromWatchlist(false);
 			window.dispatchEvent(new Event('reopenWatchlistModal'));
@@ -1793,19 +1832,20 @@ export default function Analysis({
 	// Automatically open trades detail modal when navigated from Watchlist stock click
 	useEffect(() => {
 		const handleOpenStockDetails = (e) => {
-			if (e.detail && e.detail.stock) {
-				setOpenedFromWatchlist(!!e.detail.openedFromWatchlist);
+			if (e && e.detail && e.detail.stock) {
 				handleRowClick(e.detail.stock);
+				setOpenedFromWatchlist(!!e.detail.openedFromWatchlist);
 			}
 		};
 		window.addEventListener('openStockTradeDetails', handleOpenStockDetails);
 		return () => window.removeEventListener('openStockTradeDetails', handleOpenStockDetails);
-	}, []);
+	}, [tradesData, ownershipData, trendsData, breakoutsData, metricsData]);
 
 	const handleOpenAddToWatchlist = (item, e) => {
 		if (e) e.stopPropagation();
+		const stockTicker = (item.ticker || item.symbol || item.stockName || 'ASSET').toUpperCase();
 		const stockData = {
-			ticker: item.ticker || item.symbol || item.stockName || 'ASSET',
+			ticker: stockTicker,
 			stockName: item.stockName || item.name || item.ticker || 'Asset Name',
 			price: item.price || '—',
 			marketCap: item.marketCap || '—',
@@ -1817,23 +1857,39 @@ export default function Analysis({
 		fetch(`${API_BASE}/watchlist`)
 			.then((res) => res.json())
 			.then((data) => {
+				let groups = [];
 				if (data && Array.isArray(data.groups)) {
+					groups = data.groups;
 					setDbWatchlistGroupsList(data.groups);
-					if (data.groups.length > 0) {
-						setSelectedWatchlistGroupId(data.groups[0].name);
-						setIsCreatingNewGroupMode(false);
-					} else {
-						setIsCreatingNewGroupMode(true);
-					}
+				}
+				if (data && Array.isArray(data.items)) {
+					setDbWatchlistItems(data.items);
+				}
+
+				const existingGroups = (data?.items || [])
+					.filter((w) => (w.ticker || w.symbol || '').toUpperCase() === stockTicker)
+					.map((w) => w.groupName)
+					.filter(Boolean);
+
+				if (existingGroups.length > 0) {
+					setSelectedWatchlistGroupIds(existingGroups);
+					setIsCreatingNewGroupMode(false);
+				} else if (groups.length > 0) {
+					setSelectedWatchlistGroupIds([groups[0].name]);
+					setIsCreatingNewGroupMode(false);
+				} else {
+					setSelectedWatchlistGroupIds([]);
+					setIsCreatingNewGroupMode(true);
 				}
 			})
 			.catch(() => {
 				const currentGroups = getStoredWatchlistGroups();
 				setDbWatchlistGroupsList(currentGroups);
 				if (currentGroups.length > 0) {
-					setSelectedWatchlistGroupId(currentGroups[0].name || currentGroups[0].id);
+					setSelectedWatchlistGroupIds([currentGroups[0].name || currentGroups[0].id]);
 					setIsCreatingNewGroupMode(false);
 				} else {
+					setSelectedWatchlistGroupIds([]);
 					setIsCreatingNewGroupMode(true);
 				}
 			});
@@ -1844,13 +1900,17 @@ export default function Analysis({
 	const handleConfirmAddToWatchlist = (e) => {
 		e.preventDefault();
 		if (!selectedWatchlistStock) return;
-		let targetGroupName = 'General';
+		let targetGroupNames = [...selectedWatchlistGroupIds];
 
-		if (isCreatingNewGroupMode) {
-			if (!createNewGroupInput.trim()) return;
-			targetGroupName = createNewGroupInput.trim();
-		} else if (selectedWatchlistGroupId) {
-			targetGroupName = selectedWatchlistGroupId;
+		if (isCreatingNewGroupMode && createNewGroupInput.trim()) {
+			const newName = createNewGroupInput.trim();
+			if (!targetGroupNames.some((g) => g.toLowerCase() === newName.toLowerCase())) {
+				targetGroupNames.push(newName);
+			}
+		}
+
+		if (targetGroupNames.length === 0) {
+			targetGroupNames = ['General'];
 		}
 
 		fetch(`${API_BASE}/watchlist`, {
@@ -1859,7 +1919,8 @@ export default function Analysis({
 			body: JSON.stringify({
 				ticker: selectedWatchlistStock.ticker,
 				stockName: selectedWatchlistStock.stockName,
-				groupName: targetGroupName,
+				groupNames: targetGroupNames,
+				groupName: targetGroupNames[0],
 				price: selectedWatchlistStock.price,
 				marketCap: selectedWatchlistStock.marketCap,
 				change: selectedWatchlistStock.change
@@ -1869,7 +1930,7 @@ export default function Analysis({
 			.then(() => {
 				window.dispatchEvent(new Event('watchlistUpdated'));
 				fetchLiveWatchlistTickers();
-				setWatchlistSuccessMsg(`Added ${selectedWatchlistStock.ticker} to "${targetGroupName}" Watchlist!`);
+				setWatchlistSuccessMsg(`Added ${selectedWatchlistStock.ticker} to "${targetGroupNames.join(', ')}" Watchlist!`);
 				setTimeout(() => setWatchlistSuccessMsg(''), 3000);
 				setIsAddToWatchlistOpen(false);
 				setCreateNewGroupInput('');
@@ -2034,13 +2095,13 @@ export default function Analysis({
 		}
 	};
 
-	// Navigate between stock detail sections (Trades <-> Ownership <-> Trends <-> Breakout <-> Metrics)
+	// Navigate between stock detail sections (Trades <-> Ownership <-> Trends <-> Breakout <-> Metrics <-> Consensus)
 	const handleNavigateStockSection = (stock, currentSection, target) => {
 		if (!stock) return;
 		const isGlobalOrCommodity = activeTab === 'Global' || activeTab === 'Commodity';
 		const sections = isGlobalOrCommodity
 			? ['Trends', 'Breakout']
-			: ['Trades', 'Ownership', 'Trends', 'Breakout', 'Metrics'];
+			: ['Trades', 'Ownership', 'Trends', 'Breakout', 'Metrics', 'Consensus'];
 		let targetSection = target;
 		if (target === 'next' || target === 'prev') {
 			const currIndex = sections.indexOf(currentSection);
@@ -2056,6 +2117,7 @@ export default function Analysis({
 		setSelectedOwnershipStock(null);
 		setSelectedTrendStock(null);
 		setSelectedMetricsStock(null);
+		setSelectedConsensusStock(null);
 
 		if (targetSection === 'Trades') {
 			handleRowClick(stock);
@@ -2067,13 +2129,15 @@ export default function Analysis({
 			handleTrendRowClick(stock, true);
 		} else if (targetSection === 'Metrics') {
 			handleMetricsRowClick(stock);
+		} else if (targetSection === 'Consensus') {
+			handleConsensusRowClick(stock);
 		}
 	};
 
 	// Keyboard arrow navigation for detail modal sections
 	useEffect(() => {
 		const handleKeyDown = (e) => {
-			const activeStock = selectedTradeStock || selectedOwnershipStock || selectedTrendStock || selectedMetricsStock;
+			const activeStock = selectedTradeStock || selectedOwnershipStock || selectedTrendStock || selectedMetricsStock || selectedConsensusStock;
 			if (!activeStock) return;
 			const activeSection = selectedTradeStock
 				? 'Trades'
@@ -2081,9 +2145,11 @@ export default function Analysis({
 					? 'Ownership'
 					: selectedMetricsStock
 						? 'Metrics'
-						: isBreakoutModal
-							? 'Breakout'
-							: 'Trends';
+						: selectedConsensusStock
+							? 'Consensus'
+							: isBreakoutModal
+								? 'Breakout'
+								: 'Trends';
 			if (e.key === 'ArrowLeft') {
 				handleNavigateStockSection(activeStock, activeSection, 'prev');
 			} else if (e.key === 'ArrowRight') {
@@ -2092,7 +2158,7 @@ export default function Analysis({
 		};
 		window.addEventListener('keydown', handleKeyDown);
 		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, [selectedTradeStock, selectedOwnershipStock, selectedTrendStock, selectedMetricsStock, isBreakoutModal]);
+	}, [selectedTradeStock, selectedOwnershipStock, selectedTrendStock, selectedMetricsStock, selectedConsensusStock, isBreakoutModal]);
 
 	// State for Ownership Period Mode (Quarterly / Yearly)
 	const [ownershipPeriodType, setOwnershipPeriodType] = useState('Quarterly');
@@ -2187,6 +2253,18 @@ export default function Analysis({
 			})
 			.catch((err) => console.error('Error fetching metrics data:', err))
 			.finally(() => setLoadingMetrics(false));
+
+		// Fetch Consensus Recommendations from PostgreSQL Backend
+		setLoadingConsensus(true);
+		fetch(`${API_BASE}/recommendations`)
+			.then((res) => res.json())
+			.then((data) => {
+				if (data && data.recommendations) {
+					setConsensusData(data.recommendations);
+				}
+			})
+			.catch((err) => console.error('Error fetching consensus data:', err))
+			.finally(() => setLoadingConsensus(false));
 	}, []);
 
 	// Fetch Ownership / Shareholding pattern when period mode changes
@@ -2328,9 +2406,54 @@ export default function Analysis({
 		return isNaN(num) ? -999999 : num;
 	};
 
+	const calcConsensusRating = (item) => {
+		if (!item) return 'N/A';
+		const sb = Number(item.strong_buy || item.strongBuy || 0);
+		const b = Number(item.buy || 0);
+		const h = Number(item.hold || 0);
+		const s = Number(item.sell || 0);
+		const ss = Number(item.strong_sell || item.strongSell || 0);
+		const total = Number(item.total || (sb + b + h + s + ss));
+
+		if (total <= 0) return 'N/A';
+
+		const buyTotal = sb + b;
+		const sellTotal = s + ss;
+
+		if (buyTotal > h && buyTotal >= sellTotal) {
+			return sb >= b ? 'Strong Buy' : 'Buy';
+		}
+		if (sellTotal > h && sellTotal > buyTotal) {
+			return ss >= s ? 'Strong Sell' : 'Sell';
+		}
+		return 'Hold';
+	};
+
 	const getColumnValue = (item, key) => {
-		if (key === 'stockName' || key === 'sector') return item.sector || item.stockName || '';
+		if (key === 'stockName' || key === 'sector') return item.sector || item.stockName || item.stock_name || '';
 		if (key === 'period') return item.period || '';
+		if (['total', 'strong_buy', 'strongBuy', 'buy', 'hold', 'sell', 'strong_sell', 'strongSell'].includes(key)) {
+			let val = item[key];
+			if (val === undefined) {
+				if (key === 'strong_buy') val = item.strongBuy;
+				if (key === 'strongBuy') val = item.strong_buy;
+				if (key === 'strong_sell') val = item.strongSell;
+				if (key === 'strongSell') val = item.strong_sell;
+			}
+			if (typeof val === 'number') return val;
+			return parseInt(val, 10) || 0;
+		}
+		if (['target_mean_price', 'target_high_price', 'target_low_price', 'targetMeanPrice', 'targetHighPrice', 'targetLowPrice'].includes(key)) {
+			const val = item[key];
+			if (!val || val === '0' || val === '0.0' || val === '—') return -999999;
+			return parseFloat(String(val).replace(/,/g, '')) || -999999;
+		}
+		if (key === 'consensus_rating' || key === 'consensusRating') {
+			return calcConsensusRating(item);
+		}
+		if (key === 'scraped_at' || key === 'scrapedAt') {
+			return item.scraped_at || item.scrapedAt || '';
+		}
 		if (key === 'fiiBuy') return item.fiiBuyRaw !== undefined ? item.fiiBuyRaw : -99999999;
 		if (key === 'fiiSell') return item.fiiSellRaw !== undefined ? item.fiiSellRaw : -99999999;
 		if (key === 'fiiNet') return item.fiiNetRaw !== undefined ? item.fiiNetRaw : -99999999;
@@ -2404,6 +2527,21 @@ export default function Analysis({
 	};
 
 	const compareColumnValues = (a, b, key, direction = 'asc') => {
+		if (key === 'consensus_rating' || key === 'consensusRating') {
+			const ratingRankMap = {
+				'Strong Buy': 1,
+				'Buy': 2,
+				'Hold': 3,
+				'Sell': 4,
+				'Strong Sell': 5,
+				'N/A': 6
+			};
+			const aRating = calcConsensusRating(a);
+			const bRating = calcConsensusRating(b);
+			const aRank = ratingRankMap[aRating] || 99;
+			const bRank = ratingRankMap[bRating] || 99;
+			return direction === 'asc' ? aRank - bRank : bRank - aRank;
+		}
 		const aVal = getColumnValue(a, key);
 		const bVal = getColumnValue(b, key);
 
@@ -2437,7 +2575,13 @@ export default function Analysis({
 
 	const handleSort = (key, e) => {
 		const isMulti = e && (e.shiftKey || e.ctrlKey || e.metaKey);
-		const defaultDir = 'asc';
+		const isNumericKey = [
+			'total', 'strong_buy', 'strongBuy', 'buy', 'hold', 'sell', 'strong_sell', 'strongSell',
+			'marketCap', 'price', 'volume', 'weight', 'dayChange', 'monthChange',
+			'qSalesLatest', 'qSalesPrevQ', 'qOpm', 'roce', 'plSalesGrowth', 'plNetProfit', 'plOpm', 'roe',
+			'salesVal', 'profitVal', 'roeVal', 'roceVal', 'boNum', 'fiiBuy', 'fiiSell', 'fiiNet', 'diiBuy', 'diiSell', 'diiNet'
+		].includes(key);
+		const defaultDir = isNumericKey ? 'desc' : 'asc';
 
 		setSortRules((prevRules) => {
 			const safeRules = Array.isArray(prevRules) ? prevRules : [];
@@ -2618,18 +2762,19 @@ export default function Analysis({
 		});
 	};
 
-	const renderSortHeader = (key, label, isLeft = false, isRight = false, alignRight = false, pyClass = 'py-3.5', rowSpan = 1, bgClass = 'bg-[#F1F5F9]', extraClass = '') => {
+	const renderSortHeader = (key, label, isLeft = false, isRight = false, alignRight = false, pyClass = 'py-3.5', rowSpan = 1, bgClass = 'bg-[#F1F5F9]', extraClass = '', alignCenter = false) => {
 		const safeRules = Array.isArray(sortRules) ? sortRules : [];
 		const ruleIndex = safeRules.findIndex((r) => r.key === key);
 		const activeRule = ruleIndex >= 0 ? safeRules[ruleIndex] : null;
 		const roundedClass = isLeft ? 'rounded-l-xl' : isRight ? 'rounded-r-xl' : '';
-		const alignClass = alignRight ? 'justify-end text-right' : 'justify-start text-left';
+		const alignClass = alignCenter ? 'justify-center text-center' : alignRight ? 'justify-end text-right' : 'justify-start text-left';
+		const thAlign = alignCenter ? 'text-center' : alignRight ? 'text-right' : 'text-left';
 
 		return (
 			<th
 				rowSpan={rowSpan}
 				onClick={(e) => handleSort(key, e)}
-				className={`${pyClass} px-4 font-semibold ${bgClass} sticky top-0 z-20 cursor-pointer select-none group hover:brightness-95 transition-all ${roundedClass} ${alignRight ? 'text-right' : 'text-left'} ${extraClass}`}
+				className={`${pyClass} px-4 font-semibold ${bgClass} sticky top-0 z-20 cursor-pointer select-none group hover:brightness-95 transition-all ${roundedClass} ${thAlign} ${extraClass}`}
 				title="Click to sort. Hold Shift to sort by multiple columns (AND condition)."
 			>
 				<div className={`flex items-center gap-1 whitespace-nowrap ${alignClass}`}>
@@ -2712,12 +2857,14 @@ export default function Analysis({
 	const trendKeys = ['dma20_200', 'dma50_200', 'dma100_200'];
 	const breakoutKeys = ['highBreakout', 'lowBreakout'];
 	const metricKeys = ['qSalesLatest', 'qSalesPrevQ', 'qOpm', 'roce', 'plSalesGrowth', 'plNetProfit', 'plOpm', 'roe'];
+	const consensusKeys = ['consensus_rating', 'consensusRating', 'total', 'strong_buy', 'strongBuy', 'buy', 'hold', 'sell', 'strong_sell', 'strongSell'];
 
 	const activeTradeRules = safeSortRules.filter((r) => tradeKeys.includes(r.key));
 	const activeOwnershipRules = safeSortRules.filter((r) => ownershipKeys.includes(r.key));
 	const activeTrendRules = safeSortRules.filter((r) => trendKeys.includes(r.key));
 	const activeBreakoutRules = safeSortRules.filter((r) => breakoutKeys.includes(r.key));
 	const activeMetricRules = safeSortRules.filter((r) => metricKeys.includes(r.key));
+	const activeConsensusRules = safeSortRules.filter((r) => consensusKeys.includes(r.key));
 
 	// Quick lookup maps by ticker
 	const tradesMap = new Map((tradesData || []).map((item) => [item.ticker, item]));
@@ -2725,6 +2872,7 @@ export default function Analysis({
 	const trendsMap = new Map((trendsData || []).map((item) => [item.ticker, item]));
 	const breakoutsMap = new Map((breakoutsData || []).map((item) => [item.ticker, item]));
 	const metricsMap = new Map((metricsData || []).map((item) => [item.ticker, item]));
+	const consensusMap = new Map((consensusData || []).map((item) => [item.ticker || item.symbol, item]));
 
 	// Unique Nifty stock tickers
 	const allNiftyTickers = Array.from(new Set([
@@ -2732,7 +2880,8 @@ export default function Analysis({
 		...(ownershipData || []).map((item) => item.ticker),
 		...(trendsData || []).map((item) => item.ticker),
 		...(breakoutsData || []).map((item) => item.ticker),
-		...(metricsData || []).map((item) => item.ticker)
+		...(metricsData || []).map((item) => item.ticker),
+		...(consensusData || []).map((item) => item.ticker || item.symbol)
 	])).filter(Boolean);
 
 	// Filter Nifty stocks by active filters across any table
@@ -2742,8 +2891,9 @@ export default function Analysis({
 		const trendItem = trendsMap.get(ticker);
 		const boItem = breakoutsMap.get(ticker);
 		const metricItem = metricsMap.get(ticker);
+		const conItem = consensusMap.get(ticker);
 
-		const stockName = tradeItem?.stockName || ownItem?.stockName || trendItem?.stockName || boItem?.stockName || metricItem?.stockName || '';
+		const stockName = tradeItem?.stockName || ownItem?.stockName || trendItem?.stockName || boItem?.stockName || metricItem?.stockName || conItem?.stock_name || conItem?.stockName || '';
 
 		// Search term matching
 		if (searchTerm.trim()) {
@@ -2751,6 +2901,7 @@ export default function Analysis({
 			const matchesSearch =
 				stockName.toLowerCase().includes(term) ||
 				ticker.toLowerCase().includes(term) ||
+				(conItem && calcConsensusRating(conItem).toLowerCase().includes(term)) ||
 				(tradeItem && (
 					getTradeString(tradeItem.insiderTrades).toLowerCase().includes(term) ||
 					getTradeString(tradeItem.bulkDeals).toLowerCase().includes(term) ||
@@ -2811,6 +2962,8 @@ export default function Analysis({
 		const bBo = breakoutsMap.get(bTicker);
 		const aMetric = metricsMap.get(aTicker);
 		const bMetric = metricsMap.get(bTicker);
+		const aCon = consensusMap.get(aTicker);
+		const bCon = consensusMap.get(bTicker);
 
 		for (const rule of safeSortRules) {
 			let aObj = null;
@@ -2831,13 +2984,18 @@ export default function Analysis({
 			} else if (metricKeys.includes(rule.key)) {
 				aObj = aMetric;
 				bObj = bMetric;
+			} else if (consensusKeys.includes(rule.key)) {
+				aObj = aCon;
+				bObj = bCon;
 			} else {
 				// General fallback (e.g. stockName, marketCap, price)
-				aObj = aTrade || aOwn || aTrend || aBo || aMetric;
-				bObj = bTrade || bOwn || bTrend || bBo || bMetric;
+				aObj = aTrade || aOwn || aTrend || aBo || aMetric || aCon;
+				bObj = bTrade || bOwn || bTrend || bBo || bMetric || bCon;
 			}
 
-			if (aObj && bObj) {
+			if (aObj || bObj) {
+				if (!aObj) return 1;
+				if (!bObj) return -1;
 				const comp = compareColumnValues(aObj, bObj, rule.key, rule.direction);
 				if (comp !== 0) return comp;
 			}
@@ -2852,6 +3010,8 @@ export default function Analysis({
 	const filteredBreakouts = masterFilteredTickers.map((t) => breakoutsMap.get(t)).filter(Boolean);
 	const sortedMetrics = masterFilteredTickers.map((t) => metricsMap.get(t)).filter(Boolean);
 	const filteredMetrics = sortedMetrics;
+	const sortedConsensus = masterFilteredTickers.map((t) => consensusMap.get(t)).filter(Boolean);
+	const filteredConsensus = sortedConsensus;
 
 	const filteredGlobal = useMemo(() => {
 		if (!searchTerm.trim()) return globalData;
@@ -3230,19 +3390,21 @@ export default function Analysis({
 					? filteredTrends.length
 					: activeTab === 'Metrics'
 						? filteredMetrics.length
-						: activeTab === 'Breakout'
-							? filteredBreakouts.length
-							: activeTab === 'Tara'
-								? filteredTara.length
-								: activeTab === 'Global'
-									? filteredGlobal.length
-									: activeTab === 'Commodity'
-										? filteredCommodity.length
-										: activeTab === 'Sectoral'
-											? filteredSectoral.length
-											: activeTab === 'CashFlow'
-												? filteredCashFlow.length
-												: 0;
+						: activeTab === 'Consensus'
+							? filteredConsensus.length
+							: activeTab === 'Breakout'
+								? filteredBreakouts.length
+								: activeTab === 'Tara'
+									? filteredTara.length
+									: activeTab === 'Global'
+										? filteredGlobal.length
+										: activeTab === 'Commodity'
+											? filteredCommodity.length
+											: activeTab === 'Sectoral'
+												? filteredSectoral.length
+												: activeTab === 'CashFlow'
+													? filteredCashFlow.length
+													: 0;
 
 	const totalTrades = filteredTrades.length;
 	const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE) || 1;
@@ -3257,6 +3419,7 @@ export default function Analysis({
 	const currentSectoral = sortedSectoral.slice(startIndex, endIndex);
 	const currentCashFlow = sortedCashFlow.slice(startIndex, endIndex);
 	const currentMetrics = sortedMetrics.slice(startIndex, endIndex);
+	const currentConsensus = sortedConsensus.slice(startIndex, endIndex);
 	const currentTara = sortedTara.slice(startIndex, endIndex);
 
 	const renderBreakoutCell = (val, type) => {
@@ -3521,7 +3684,7 @@ export default function Analysis({
 						)}
 
 						{/* Clear Sort Icon Button */}
-						{(activeTab === 'Trades' || activeTab === 'Ownership' || activeTab === 'Trends' || activeTab === 'Breakout' || activeTab === 'Metrics' || activeTab === 'Global' || activeTab === 'Sectoral' || activeTab === 'CashFlow') &&
+						{(activeTab === 'Trades' || activeTab === 'Ownership' || activeTab === 'Trends' || activeTab === 'Breakout' || activeTab === 'Metrics' || activeTab === 'Consensus' || activeTab === 'Global' || activeTab === 'Sectoral' || activeTab === 'CashFlow') &&
 							safeSortRules.length > 0 &&
 							!(safeSortRules.length === 1 && safeSortRules[0].key === 'stockName' && safeSortRules[0].direction === 'asc') && (
 								<button
@@ -3817,6 +3980,123 @@ export default function Analysis({
 											<tr>
 												<td colSpan="12" className="py-12 text-center text-slate-400 text-sm font-medium">
 													No financial metrics data found matching "{searchTerm}"
+												</td>
+											</tr>
+										)}
+									</>
+								)}
+							</tbody>
+						</table>
+					) : activeTab === 'Consensus' ? (
+						/* Consensus Recommendations Table View */
+						<table className="w-full text-left border-collapse">
+							<thead className="sticky top-0 z-20 bg-[#F1F5F9] shadow-xs">
+								<tr className="bg-[#F1F5F9] text-slate-700 text-sm font-semibold">
+									{renderSortHeader('stockName', 'Stock Name', true, false, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'sticky left-0 z-30 min-w-[220px] bg-[#F1F5F9]')}
+									{renderSortHeader('consensus_rating', 'Consensus Rating', false, false, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'min-w-[150px]')}
+									{renderSortHeader('total', 'Total Analysts', false, false, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'min-w-[120px]', true)}
+									{renderSortHeader('strong_buy', 'Strong Buy', false, false, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'min-w-[110px]', true)}
+									{renderSortHeader('buy', 'Buy', false, false, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'min-w-[90px]', true)}
+									{renderSortHeader('hold', 'Hold', false, false, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'min-w-[90px]', true)}
+									{renderSortHeader('sell', 'Sell', false, false, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'min-w-[90px]', true)}
+									{renderSortHeader('strong_sell', 'Strong Sell', false, true, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'min-w-[110px]', true)}
+								</tr>
+							</thead>
+							<tbody className="divide-y divide-slate-100/80">
+								{loadingConsensus ? (
+									<tr>
+										<td colSpan="12" className="py-6">
+											<LottieLoader text="Loading consensus recommendations..." width="200px" height="200px" />
+										</td>
+									</tr>
+								) : (
+									<>
+										{currentConsensus.map((item) => {
+											const rating = calcConsensusRating(item);
+											let badgeStyle = 'bg-slate-100 text-slate-600 border-slate-200';
+											const rLower = rating.toLowerCase();
+											if (rLower.includes('strong buy') || rLower.includes('buy')) {
+												badgeStyle = rLower.includes('strong')
+													? 'bg-emerald-100 text-emerald-800 border-emerald-300 font-extrabold'
+													: 'bg-emerald-50 text-emerald-700 border-emerald-200 font-bold';
+											} else if (rLower.includes('hold')) {
+												badgeStyle = 'bg-amber-50 text-amber-800 border-amber-200 font-bold';
+											} else if (rLower.includes('sell')) {
+												badgeStyle = rLower.includes('strong')
+													? 'bg-rose-100 text-rose-800 border-rose-300 font-extrabold'
+													: 'bg-rose-50 text-rose-700 border-rose-200 font-bold';
+											}
+
+											const fmtPrice = (p) => {
+												if (!p || p === '0' || p === '0.0' || p === '—' || p === '-') return '—';
+												const num = parseFloat(String(p).replace(/,/g, ''));
+												if (isNaN(num) || num <= 0) return '—';
+												return `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+											};
+
+											const stockName = item.stock_name || item.stockName || item.symbol || item.ticker || '';
+											const ticker = item.symbol || item.ticker || '';
+
+											return (
+												<tr
+													key={item.id || ticker}
+													onClick={() => handleConsensusRowClick({ ...item, ticker, stockName })}
+													className="hover:bg-purple-50/40 transition-colors cursor-pointer group"
+												>
+													{/* Stock Name (Frozen column 1) */}
+													<td className="py-2.5 px-4 sticky left-0 z-10 bg-white group-hover:bg-[#f8f5fd] transition-colors min-w-[220px]">
+														<div className="flex items-center justify-between gap-2">
+															<div>
+																<span className="font-bold text-slate-800 text-base block">{stockName}</span>
+																<span className="text-xs text-slate-400 font-medium">{ticker}</span>
+															</div>
+															{renderWatchlistIconBtn({ ticker, stockName })}
+														</div>
+													</td>
+
+													{/* Consensus Rating */}
+													<td className="py-2.5 px-4 text-xs whitespace-nowrap">
+														<span className={`px-2.5 py-1 rounded-lg border inline-block text-center shadow-2xs ${badgeStyle}`}>
+															{rating}
+														</span>
+													</td>
+
+													{/* Total Analysts */}
+													<td className="py-2.5 px-4 text-sm font-bold text-slate-800 text-center whitespace-nowrap">
+														{item.total ?? 0}
+													</td>
+
+													{/* Strong Buy */}
+													<td className="py-2.5 px-4 text-sm font-semibold text-emerald-700 text-center whitespace-nowrap">
+														{item.strong_buy || item.strongBuy || 0}
+													</td>
+
+													{/* Buy */}
+													<td className="py-2.5 px-4 text-sm font-semibold text-emerald-600 text-center whitespace-nowrap">
+														{item.buy || 0}
+													</td>
+
+													{/* Hold */}
+													<td className="py-2.5 px-4 text-sm font-semibold text-amber-600 text-center whitespace-nowrap">
+														{item.hold || 0}
+													</td>
+
+													{/* Sell */}
+													<td className="py-2.5 px-4 text-sm font-semibold text-rose-600 text-center whitespace-nowrap">
+														{item.sell || 0}
+													</td>
+
+													{/* Strong Sell */}
+													<td className="py-2.5 px-4 text-sm font-semibold text-rose-700 text-center whitespace-nowrap">
+														{item.strong_sell || item.strongSell || 0}
+													</td>
+												</tr>
+											);
+										})}
+										{filteredConsensus.length === 0 && (
+											<tr>
+												<td colSpan="12" className="py-12 text-center text-slate-400 text-sm font-medium">
+													No consensus recommendations data found matching "{searchTerm}"
 												</td>
 											</tr>
 										)}
@@ -4816,8 +5096,8 @@ export default function Analysis({
 					)}
 				</div>
 
-				{/* Pagination Controls for Trades, Ownership, Trends, Breakout, Metrics, Tara, Global, Commodity & CashFlow Tabs */}
-				{(activeTab === 'Trades' || activeTab === 'Ownership' || activeTab === 'Trends' || activeTab === 'Breakout' || activeTab === 'Metrics' || activeTab === 'Tara' || activeTab === 'Global' || activeTab === 'Commodity' || activeTab === 'CashFlow') && (
+				{/* Pagination Controls for Trades, Ownership, Trends, Breakout, Metrics, Consensus, Tara, Global, Commodity & CashFlow Tabs */}
+				{(activeTab === 'Trades' || activeTab === 'Ownership' || activeTab === 'Trends' || activeTab === 'Breakout' || activeTab === 'Metrics' || activeTab === 'Consensus' || activeTab === 'Tara' || activeTab === 'Global' || activeTab === 'Commodity' || activeTab === 'CashFlow') && (
 					<div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-slate-500">
 						<div>
 							Showing <span className="font-semibold text-slate-900">{totalItems > 0 ? startIndex + 1 : 0}</span> to <span className="font-semibold text-slate-900">{endIndex}</span> of <span className="font-semibold text-slate-900">{totalItems}</span> results
@@ -5631,10 +5911,234 @@ export default function Analysis({
 				document.body
 			)}
 
+			{/* Detailed Consensus Recommendations Popup */}
+			{selectedConsensusStock && ReactDOM.createPortal(
+				<div className="fixed inset-0 top-0 bottom-0 left-0 right-0 w-screen h-screen z-[9999] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+					{/* Left Move Icon (<) */}
+					<button
+						onClick={() => handleNavigateStockSection(selectedConsensusStock, 'Consensus', 'prev')}
+						title="Move to Previous Section (Financial Metrics)"
+						className="absolute left-6 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/95 hover:bg-white shadow-2xl border border-slate-200 text-slate-700 hover:text-[#9462d2] hover:border-purple-300 flex items-center justify-center transition-all cursor-pointer z-[10000] hover:scale-110 active:scale-95 group"
+					>
+						<span className="material-symbols-outlined text-[30px] group-hover:-translate-x-0.5 transition-transform">chevron_left</span>
+					</button>
+
+					{/* Right Move Icon (>) */}
+					<button
+						onClick={() => handleNavigateStockSection(selectedConsensusStock, 'Consensus', 'next')}
+						title="Move to Next Section (Trades Details)"
+						className="absolute right-6 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/95 hover:bg-white shadow-2xl border border-slate-200 text-slate-700 hover:text-[#9462d2] hover:border-purple-300 flex items-center justify-center transition-all cursor-pointer z-[10000] hover:scale-110 active:scale-95 group"
+					>
+						<span className="material-symbols-outlined text-[30px] group-hover:translate-x-0.5 transition-transform">chevron_right</span>
+					</button>
+
+					<div className="bg-white rounded-2xl shadow-2xl max-w-[85%] w-full max-h-[90vh] flex flex-col border border-slate-100 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+
+						{/* Modal Header */}
+						<div className="flex items-center justify-between px-6 py-5 border-b border-slate-100">
+							<div className="flex items-center gap-4">
+								<div>
+									<div className="flex items-center gap-3">
+										<h2 className="text-2xl font-bold text-slate-800">
+											{selectedConsensusStock.stock_name || selectedConsensusStock.stockName || selectedConsensusStock.symbol || selectedConsensusStock.ticker}
+										</h2>
+										<span className="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-purple-50 text-[#9462d2] border border-purple-200 uppercase tracking-wide">
+											{selectedConsensusStock.symbol || selectedConsensusStock.ticker}
+										</span>
+									</div>
+									<div className="flex items-center gap-3 text-xs text-slate-500 font-semibold mt-1">
+										{selectedConsensusStock.marketCap && (
+											<>
+												<span>Market Cap: <strong className="text-slate-800">{selectedConsensusStock.marketCap}</strong></span>
+												<span>•</span>
+											</>
+										)}
+										{selectedConsensusStock.price && (
+											<>
+												<span>Current Price: <strong className="text-slate-800">{selectedConsensusStock.price}</strong></span>
+												<span>•</span>
+											</>
+										)}
+										<span className="text-[#9462d2] font-bold">Analyst Consensus Recommendations</span>
+									</div>
+								</div>
+							</div>
+							<button
+								onClick={() => handleCloseStockModal(setSelectedConsensusStock)}
+								className="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+							>
+								<span className="material-symbols-outlined text-[22px]">close</span>
+							</button>
+						</div>
+
+						{/* Modal Body View */}
+						<div className="flex-1 overflow-y-auto px-6 py-6 slim-scroll relative">
+							{(() => {
+								const item = selectedConsensusStock;
+								const rating = calcConsensusRating(item);
+								let badgeStyle = 'bg-slate-100 text-slate-600 border-slate-200';
+								const rLower = rating.toLowerCase();
+								if (rLower.includes('strong buy') || rLower.includes('buy')) {
+									badgeStyle = rLower.includes('strong')
+										? 'bg-emerald-100 text-emerald-800 border-emerald-300 font-extrabold'
+										: 'bg-emerald-50 text-emerald-700 border-emerald-200 font-bold';
+								} else if (rLower.includes('hold')) {
+									badgeStyle = 'bg-amber-50 text-amber-800 border-amber-200 font-bold';
+								} else if (rLower.includes('sell')) {
+									badgeStyle = rLower.includes('strong')
+										? 'bg-rose-100 text-rose-800 border-rose-300 font-extrabold'
+										: 'bg-rose-50 text-rose-700 border-rose-200 font-bold';
+								}
+
+								const total = item.total || 0;
+								const strongBuy = item.strong_buy || item.strongBuy || 0;
+								const buy = item.buy || 0;
+								const hold = item.hold || 0;
+								const sell = item.sell || 0;
+								const strongSell = item.strong_sell || item.strongSell || 0;
+
+								const pct = (val) => (total > 0 ? ((val / total) * 100).toFixed(1) : 0);
+
+								return (
+									<div className="flex flex-col gap-6">
+										{/* Consensus Overview Card */}
+										<div className="bg-gradient-to-r from-purple-50/70 via-slate-50 to-white rounded-2xl p-6 border border-purple-100 shadow-2xs flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+											<div className="flex items-center gap-4">
+												<div className="w-14 h-14 rounded-2xl bg-white border border-purple-200/80 shadow-xs flex items-center justify-center text-[#9462d2]">
+													<span className="material-symbols-outlined text-[32px]">analytics</span>
+												</div>
+												<div>
+													<span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Consensus Recommendation</span>
+													<div className="flex items-center gap-3 mt-1">
+														<span className={`px-3 py-1 rounded-xl text-base border shadow-2xs ${badgeStyle}`}>
+															{rating}
+														</span>
+													</div>
+												</div>
+											</div>
+
+											{/* Total Analysts Count Card */}
+											<div className="bg-white px-6 py-3 rounded-xl border border-slate-200/80 text-center shadow-2xs min-w-[150px]">
+												<span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Total Analysts</span>
+												<span className="text-2xl font-extrabold text-slate-800 block mt-0.5">{total}</span>
+											</div>
+										</div>
+
+										{/* Analyst Recommendations Counts Cards */}
+										<div className="bg-slate-50/80 rounded-2xl p-5 border border-slate-200/60 shadow-2xs space-y-4">
+											<div className="flex items-center justify-between">
+												<h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+													<span className="material-symbols-outlined text-[#9462d2] text-[20px]">groups</span>
+													<span>Analyst Recommendations Breakdown ({total} Total)</span>
+												</h3>
+											</div>
+
+											<div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+												<div className="bg-emerald-50/60 p-4 rounded-xl border border-emerald-200 text-center shadow-2xs">
+													<span className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider block">Strong Buy</span>
+													<span className="text-2xl font-extrabold text-emerald-700 block mt-1">{strongBuy}</span>
+													<span className="text-[11px] font-bold text-emerald-600 block mt-0.5">{pct(strongBuy)}%</span>
+												</div>
+												<div className="bg-emerald-50/30 p-4 rounded-xl border border-emerald-100 text-center shadow-2xs">
+													<span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">Buy</span>
+													<span className="text-2xl font-extrabold text-emerald-600 block mt-1">{buy}</span>
+													<span className="text-[11px] font-bold text-emerald-600 block mt-0.5">{pct(buy)}%</span>
+												</div>
+												<div className="bg-amber-50/50 p-4 rounded-xl border border-amber-200 text-center shadow-2xs">
+													<span className="text-[11px] font-bold text-amber-800 uppercase tracking-wider block">Hold</span>
+													<span className="text-2xl font-extrabold text-amber-600 block mt-1">{hold}</span>
+													<span className="text-[11px] font-bold text-amber-600 block mt-0.5">{pct(hold)}%</span>
+												</div>
+												<div className="bg-rose-50/30 p-4 rounded-xl border border-rose-100 text-center shadow-2xs">
+													<span className="text-[11px] font-bold text-rose-700 uppercase tracking-wider block">Sell</span>
+													<span className="text-2xl font-extrabold text-rose-600 block mt-1">{sell}</span>
+													<span className="text-[11px] font-bold text-rose-600 block mt-0.5">{pct(sell)}%</span>
+												</div>
+												<div className="bg-rose-50/60 p-4 rounded-xl border border-rose-200 text-center shadow-2xs">
+													<span className="text-[11px] font-bold text-rose-800 uppercase tracking-wider block">Strong Sell</span>
+													<span className="text-2xl font-extrabold text-rose-700 block mt-1">{strongSell}</span>
+													<span className="text-[11px] font-bold text-rose-600 block mt-0.5">{pct(strongSell)}%</span>
+												</div>
+											</div>
+
+											{/* Visual Recommendation Distribution Bar */}
+											<div className="bg-white p-4 rounded-xl border border-slate-200/80 space-y-2">
+												<span className="text-xs font-bold text-slate-700 block">Recommendation Distribution</span>
+												<div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden flex">
+													{strongBuy > 0 && (
+														<div
+															style={{ width: `${pct(strongBuy)}%` }}
+															className="bg-emerald-600 h-full transition-all"
+															title={`Strong Buy: ${strongBuy} (${pct(strongBuy)}%)`}
+														/>
+													)}
+													{buy > 0 && (
+														<div
+															style={{ width: `${pct(buy)}%` }}
+															className="bg-emerald-400 h-full transition-all"
+															title={`Buy: ${buy} (${pct(buy)}%)`}
+														/>
+													)}
+													{hold > 0 && (
+														<div
+															style={{ width: `${pct(hold)}%` }}
+															className="bg-amber-400 h-full transition-all"
+															title={`Hold: ${hold} (${pct(hold)}%)`}
+														/>
+													)}
+													{sell > 0 && (
+														<div
+															style={{ width: `${pct(sell)}%` }}
+															className="bg-rose-400 h-full transition-all"
+															title={`Sell: ${sell} (${pct(sell)}%)`}
+														/>
+													)}
+													{strongSell > 0 && (
+														<div
+															style={{ width: `${pct(strongSell)}%` }}
+															className="bg-rose-600 h-full transition-all"
+															title={`Strong Sell: ${strongSell} (${pct(strongSell)}%)`}
+														/>
+													)}
+												</div>
+												<div className="flex flex-wrap items-center justify-between text-[11px] text-slate-500 font-semibold pt-1">
+													<div className="flex items-center gap-1.5">
+														<span className="w-2.5 h-2.5 rounded-full bg-emerald-600 inline-block" />
+														<span>Strong Buy ({pct(strongBuy)}%)</span>
+													</div>
+													<div className="flex items-center gap-1.5">
+														<span className="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block" />
+														<span>Buy ({pct(buy)}%)</span>
+													</div>
+													<div className="flex items-center gap-1.5">
+														<span className="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block" />
+														<span>Hold ({pct(hold)}%)</span>
+													</div>
+													<div className="flex items-center gap-1.5">
+														<span className="w-2.5 h-2.5 rounded-full bg-rose-400 inline-block" />
+														<span>Sell ({pct(sell)}%)</span>
+													</div>
+													<div className="flex items-center gap-1.5">
+														<span className="w-2.5 h-2.5 rounded-full bg-rose-600 inline-block" />
+														<span>Strong Sell ({pct(strongSell)}%)</span>
+													</div>
+												</div>
+											</div>
+										</div>
+									</div>
+								);
+							})()}
+						</div>
+
+					</div>
+				</div>,
+				document.body
+			)}
+
 			{/* Add to Watchlist Group Modal Popup */}
 			{isAddToWatchlistOpen && selectedWatchlistStock && ReactDOM.createPortal(
 				<div className="fixed inset-0 top-0 bottom-0 left-0 right-0 w-screen h-screen z-[99999] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
-					<div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-100 overflow-hidden animate-in fade-in zoom-in-95 duration-150 space-y-5">
+					<div className="bg-white rounded-2xl shadow-2xl max-w-[40%] w-full p-8 border border-slate-100 overflow-hidden animate-in fade-in zoom-in-95 duration-150 space-y-5">
 						<div className="flex items-center justify-between border-b border-slate-100 pb-3.5">
 							<div className="flex items-center gap-3">
 								<div className="w-10 h-10 rounded-xl bg-purple-100 text-[#9462d2] flex items-center justify-center font-bold shadow-xs">
@@ -5655,26 +6159,13 @@ export default function Analysis({
 
 						<form onSubmit={handleConfirmAddToWatchlist} className="space-y-4">
 							<div className="space-y-3">
-								<span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">Watchlist Group:</span>
+								<span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">Watchlist Groups:</span>
 
-								{/* Existing Watchlist Group Choice */}
+								{/* Existing Watchlist Group Choice (Multi-Select) */}
 								{dbWatchlistGroupsList.length > 0 && (
-									<label className={`flex items-center justify-between p-3.5 rounded-xl border cursor-pointer transition-all ${!isCreatingNewGroupMode
-										? 'border-purple-300 bg-purple-50/50 shadow-xs ring-1 ring-purple-200'
-										: 'border-slate-200 bg-slate-50/50 hover:bg-slate-100/50'
-										}`}>
-										<div className="flex items-center gap-2.5">
-											<input
-												type="radio"
-												name="groupChoice"
-												checked={!isCreatingNewGroupMode}
-												onChange={() => setIsCreatingNewGroupMode(false)}
-												className="text-[#9462d2] focus:ring-[#9462d2]"
-											/>
-											<span className="text-xs font-bold text-slate-800">Existing Group</span>
-										</div>
-
-										{!isCreatingNewGroupMode && (
+									<div className="p-3.5 rounded-xl border border-purple-200 bg-purple-50/40 space-y-2">
+										<div className="flex items-center justify-between">
+											<span className="text-xs font-bold text-slate-800">Select Groups</span>
 											<div className="relative inline-block text-left">
 												<button
 													type="button"
@@ -5685,35 +6176,51 @@ export default function Analysis({
 													className="bg-white border border-purple-300 hover:border-purple-400 text-xs font-bold text-slate-800 rounded-xl px-3 py-1.5 outline-none transition-all cursor-pointer flex items-center gap-1.5 shadow-2xs"
 												>
 													<span className="max-w-[140px] truncate">
-														{selectedWatchlistGroupId || 'Select Group'}
+														{selectedWatchlistGroupIds.length === 0
+															? 'Select Groups'
+															: selectedWatchlistGroupIds.length === 1
+																? selectedWatchlistGroupIds[0]
+																: `${selectedWatchlistGroupIds.length} Groups Selected`}
 													</span>
+													{selectedWatchlistGroupIds.length > 0 && (
+														<span className="w-4 h-4 rounded-full bg-[#9462d2] text-white text-[10px] font-bold flex items-center justify-center">
+															{selectedWatchlistGroupIds.length}
+														</span>
+													)}
 													<span className={`material-symbols-outlined text-[16px] text-purple-600 transition-transform duration-200 ${isModalGroupDropdownOpen ? 'rotate-180' : ''}`}>
 														keyboard_arrow_down
 													</span>
 												</button>
 
-												{/* Custom Rounded Options Dropdown Menu Card */}
+												{/* Custom Rounded Multi-Select Options Dropdown Menu */}
 												{isModalGroupDropdownOpen && (
 													<>
 														<div className="fixed inset-0 z-40" onClick={() => setIsModalGroupDropdownOpen(false)}></div>
-														<div className="absolute right-0 mt-2 w-52 bg-white rounded-2xl shadow-xl border border-purple-100 p-1.5 z-50 animate-in fade-in zoom-in-95 duration-150 space-y-1">
+														<div className="absolute right-0 mt-2 w-56 bg-white rounded-2xl shadow-xl border border-purple-100 p-2 z-50 animate-in fade-in zoom-in-95 duration-150 space-y-1 max-h-32 overflow-y-auto slim-scroll">
 															{dbWatchlistGroupsList.map((g) => {
-																const isSel = selectedWatchlistGroupId.toLowerCase() === g.name.toLowerCase();
+																const isSel = selectedWatchlistGroupIds.some((name) => name.toLowerCase() === g.name.toLowerCase());
 																return (
 																	<button
 																		key={g.id || g.name}
 																		type="button"
 																		onClick={(e) => {
 																			e.preventDefault();
-																			setSelectedWatchlistGroupId(g.name);
-																			setIsModalGroupDropdownOpen(false);
+																			toggleWatchlistGroupSelection(g.name);
 																		}}
 																		className={`w-full text-left px-3 py-2 text-xs font-bold rounded-xl transition-all flex items-center justify-between cursor-pointer ${isSel
-																			? 'bg-[#9462d2] text-white shadow-xs'
-																			: 'text-slate-700 hover:bg-purple-50 hover:text-[#9462d2]'
+																			? 'bg-purple-50 text-[#9462d2] border border-purple-200'
+																			: 'text-slate-700 hover:bg-slate-50 hover:text-slate-900'
 																			}`}
 																	>
 																		<span className="truncate">{g.name}</span>
+																		<div className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all ${isSel
+																			? 'bg-[#9462d2] border-[#9462d2] text-white'
+																			: 'border-slate-300 bg-white'
+																			}`}>
+																			{isSel && (
+																				<span className="material-symbols-outlined text-[12px] stroke-[3]">check</span>
+																			)}
+																		</div>
 																	</button>
 																);
 															})}
@@ -5721,25 +6228,42 @@ export default function Analysis({
 													</>
 												)}
 											</div>
+										</div>
+
+										{/* Active Group Badges Chips */}
+										{selectedWatchlistGroupIds.length > 0 && (
+											<div className="flex flex-wrap gap-1.5 pt-1">
+												{selectedWatchlistGroupIds.map((name) => (
+													<span
+														key={name}
+														className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white border border-purple-200 text-[#9462d2] text-xs font-bold shadow-2xs"
+													>
+														<span>{name}</span>
+														<button
+															type="button"
+															onClick={() => toggleWatchlistGroupSelection(name)}
+															className="hover:text-rose-600 cursor-pointer flex items-center justify-center ml-0.5"
+														>
+															<span className="material-symbols-outlined text-[14px]">close</span>
+														</button>
+													</span>
+												))}
+											</div>
 										)}
-									</label>
+									</div>
 								)}
 
 								{/* Create New Group Option */}
-								<label className={`flex flex-col gap-2.5 p-3.5 rounded-xl border cursor-pointer transition-all ${isCreatingNewGroupMode
-									? 'border-purple-300 bg-purple-50/50 shadow-xs ring-1 ring-purple-200'
-									: 'border-slate-200 bg-slate-50/50 hover:bg-slate-100/50'
-									}`}>
-									<div className="flex items-center gap-2.5">
+								<div className="p-3.5 rounded-xl border border-slate-200 bg-slate-50/50 space-y-2">
+									<label className="flex items-center gap-2 cursor-pointer">
 										<input
-											type="radio"
-											name="groupChoice"
+											type="checkbox"
 											checked={isCreatingNewGroupMode}
-											onChange={() => setIsCreatingNewGroupMode(true)}
-											className="text-[#9462d2] focus:ring-[#9462d2]"
+											onChange={(e) => setIsCreatingNewGroupMode(e.target.checked)}
+											className="text-[#9462d2] focus:ring-[#9462d2] rounded"
 										/>
-										<span className="text-xs font-bold text-slate-800">+ Create New Group</span>
-									</div>
+										<span className="text-xs font-bold text-slate-800">Create & Add to New Group</span>
+									</label>
 
 									{isCreatingNewGroupMode && (
 										<input
@@ -5751,20 +6275,21 @@ export default function Analysis({
 											className="bg-white border border-purple-200 text-xs text-slate-800 rounded-lg px-3.5 py-2 outline-none focus:border-purple-600 focus:ring-2 focus:ring-purple-100 w-full mt-1"
 										/>
 									)}
-								</label>
+								</div>
 							</div>
 
 							<div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
 								<button
 									type="button"
 									onClick={() => setIsAddToWatchlistOpen(false)}
-									className="px-4 py-2 text-xs font-semibold text-slate-500 hover:text-slate-800 cursor-pointer"
+									className="px-4 py-2 text-xs font-semibold text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl cursor-pointer"
 								>
 									Cancel
 								</button>
 								<button
 									type="submit"
-									className="px-5 py-2 bg-[#9462d2] hover:bg-purple-700 text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer"
+									disabled={selectedWatchlistGroupIds.length === 0 && (!isCreatingNewGroupMode || !createNewGroupInput.trim())}
+									className="px-5 py-2 bg-[#9462d2] hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold rounded-xl shadow-xs transition-all cursor-pointer"
 								>
 									Add Stock
 								</button>

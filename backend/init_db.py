@@ -411,6 +411,41 @@ TABLE_DEFINITIONS = [
             ("avatar_bg", "VARCHAR(50)"),
             ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
         ]
+    },
+    {
+        "table": "consensus_recommendations",
+        "create": """
+            CREATE TABLE IF NOT EXISTS consensus_recommendations (
+                id                  SERIAL PRIMARY KEY,
+                symbol              VARCHAR(50) UNIQUE NOT NULL,
+                total               INTEGER DEFAULT 0,
+                strong_buy          INTEGER DEFAULT 0,
+                buy                 INTEGER DEFAULT 0,
+                hold                INTEGER DEFAULT 0,
+                sell                INTEGER DEFAULT 0,
+                strong_sell         INTEGER DEFAULT 0,
+                consensus_rating    VARCHAR(100),
+                target_mean_price   VARCHAR(50),
+                target_high_price   VARCHAR(50),
+                target_low_price    VARCHAR(50),
+                scraped_at          TIMESTAMP DEFAULT NOW()
+            );
+        """,
+        "columns": [
+            ("id", "SERIAL"),
+            ("symbol", "VARCHAR(50)"),
+            ("total", "INTEGER"),
+            ("strong_buy", "INTEGER"),
+            ("buy", "INTEGER"),
+            ("hold", "INTEGER"),
+            ("sell", "INTEGER"),
+            ("strong_sell", "INTEGER"),
+            ("consensus_rating", "VARCHAR(100)"),
+            ("target_mean_price", "VARCHAR(50)"),
+            ("target_high_price", "VARCHAR(50)"),
+            ("target_low_price", "VARCHAR(50)"),
+            ("scraped_at", "TIMESTAMP DEFAULT NOW()"),
+        ]
     }
 ]
 

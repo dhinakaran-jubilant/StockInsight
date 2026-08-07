@@ -40,6 +40,7 @@ SCRAPERS = [
     "scrape_nifty_lists_scrapy.py",
     "scrape_trade_scrapy.py",
     "scrape_historical.py",
+    "scrape_consensus_recommendation.py",
     "scrape_global_historical.py",
     "scrape_sectoral_activity.py",
     "scrape_commodities.py",
@@ -94,10 +95,10 @@ def run_all_scrapers(python_exec=None, company=None):
             continue
 
         cmd = [python_exec, str(script_path)]
-        if company and script_name in ["scrape_trade_scrapy.py", "scrape_historical.py"]:
+        if company and script_name in ["scrape_trade_scrapy.py", "scrape_historical.py", "scrape_consensus_recommendation.py"]:
             cmd.extend(["--company", company.upper()])
 
-        logging.info(f"\n---> [{index}/{len(SCRAPERS)}] Running: {script_name}{' (--company ' + company.upper() + ')' if company and script_name in ['scrape_trade_scrapy.py', 'scrape_historical.py'] else ''}...")
+        logging.info(f"\n---> [{index}/{len(SCRAPERS)}] Running: {script_name}{' (--company ' + company.upper() + ')' if company and script_name in ['scrape_trade_scrapy.py', 'scrape_historical.py', 'scrape_consensus_recommendation.py'] else ''}...")
         t_start = time.time()
 
         try:

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import { API_BASE } from '../apiConfig';
 
@@ -96,9 +96,42 @@ export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '',
 		}
 	};
 
+	const groupedWatchlistItems = useMemo(() => {
+		if (!Array.isArray(watchlistItems)) return [];
+
+		const map = new Map();
+		watchlistItems.forEach((item) => {
+			const tickerKey = (item.ticker || item.symbol || item.stockName || '').toUpperCase();
+			if (!tickerKey) return;
+
+			const gName = item.groupName || item.category || 'General';
+
+			if (!map.has(tickerKey)) {
+				map.set(tickerKey, {
+					...item,
+					ticker: tickerKey,
+					groupNames: [gName]
+				});
+			} else {
+				const existing = map.get(tickerKey);
+				if (!existing.groupNames.includes(gName)) {
+					existing.groupNames.push(gName);
+				}
+				if (item.exit && item.exit.startsWith('Yes') && (!existing.exit || !existing.exit.startsWith('Yes'))) {
+					existing.exit = item.exit;
+				}
+				if (item.strongExit && item.strongExit.startsWith('Yes') && (!existing.strongExit || !existing.strongExit.startsWith('Yes'))) {
+					existing.strongExit = item.strongExit;
+				}
+			}
+		});
+
+		return Array.from(map.values());
+	}, [watchlistItems]);
+
 	const getGroupDropdownLabel = () => {
 		if (selectedGroupFilters.length === 0) {
-			return `All Groups (${watchlistItems.length})`;
+			return `All Groups (${groupedWatchlistItems.length})`;
 		}
 		if (selectedGroupFilters.length === 1) {
 			const singleName = selectedGroupFilters[0];
@@ -308,24 +341,27 @@ export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '',
 			.catch((err) => console.error('Error adding stock in Navbar:', err));
 	};
 
-	const filteredWatchlist = watchlistItems.filter((item) => {
-		const matchesSearch =
-			!watchlistSearch ||
-			(item.ticker && item.ticker.toLowerCase().includes(watchlistSearch.toLowerCase())) ||
-			(item.stockName && item.stockName.toLowerCase().includes(watchlistSearch.toLowerCase())) ||
-			(item.groupName && item.groupName.toLowerCase().includes(watchlistSearch.toLowerCase()));
+	const filteredWatchlist = useMemo(() => {
+		return groupedWatchlistItems.filter((item) => {
+			const matchesSearch =
+				!watchlistSearch ||
+				(item.ticker && item.ticker.toLowerCase().includes(watchlistSearch.toLowerCase())) ||
+				(item.stockName && item.stockName.toLowerCase().includes(watchlistSearch.toLowerCase())) ||
+				(item.groupNames && item.groupNames.some((g) => g.toLowerCase().includes(watchlistSearch.toLowerCase())));
 
-		const itemGroup = (item.groupName || item.category || 'General').toLowerCase();
-		const matchesGroup =
-			selectedGroupFilters.length === 0 ||
-			selectedGroupFilters.some((gName) => gName.toLowerCase() === itemGroup);
+			const matchesGroup =
+				selectedGroupFilters.length === 0 ||
+				(item.groupNames && item.groupNames.some((gName) =>
+					selectedGroupFilters.some((fName) => fName.toLowerCase() === gName.toLowerCase())
+				));
 
-		return matchesSearch && matchesGroup;
-	});
+			return matchesSearch && matchesGroup;
+		});
+	}, [groupedWatchlistItems, watchlistSearch, selectedGroupFilters]);
 
-	const exitStocks = watchlistItems.filter((i) => i.exit && i.exit.startsWith('Yes'));
-	const strongExitStocks = watchlistItems.filter((i) => i.strongExit && i.strongExit.startsWith('Yes'));
-	const alertStockItems = watchlistItems.filter(
+	const exitStocks = groupedWatchlistItems.filter((i) => i.exit && i.exit.startsWith('Yes'));
+	const strongExitStocks = groupedWatchlistItems.filter((i) => i.strongExit && i.strongExit.startsWith('Yes'));
+	const alertStockItems = groupedWatchlistItems.filter(
 		(i) => (i.exit && i.exit.startsWith('Yes')) || (i.strongExit && i.strongExit.startsWith('Yes'))
 	);
 	const totalAlertCount = alertStockItems.length;
@@ -888,11 +924,29 @@ export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '',
 														</div>
 													</td>
 
-													{/* Category / Group Name */}
-													<td className="py-3 px-4 text-xs font-semibold text-slate-600 whitespace-nowrap">
-														<span className="px-2.5 py-1 rounded-full bg-purple-50 text-[#9462d2] border border-purple-100/60 font-bold">
-															{item.groupName || item.category || 'General'}
-														</span>
+													{/* Category / Group Names */}
+													<td className="py-3 px-4 text-xs font-semibold text-slate-600">
+														<div className="flex flex-wrap gap-1.5 items-center max-w-[220px]">
+															{(item.groupNames || [item.groupName || 'General']).map((gName) => (
+																<span
+																	key={gName}
+																	className="px-2.5 py-1 rounded-full bg-purple-50 text-[#9462d2] border border-purple-100/60 font-bold whitespace-nowrap text-xs inline-flex items-center gap-1 shadow-2xs"
+																>
+																	<span>{gName}</span>
+																	<button
+																		type="button"
+																		onClick={(e) => {
+																			e.stopPropagation();
+																			handleRemoveWatchlistItem({ ...item, groupName: gName }, e);
+																		}}
+																		className="w-3.5 h-3.5 rounded-full hover:bg-rose-200 hover:text-rose-700 flex items-center justify-center cursor-pointer transition-colors text-purple-400"
+																		title={`Remove ${item.ticker} from "${gName}"`}
+																	>
+																		<span className="material-symbols-outlined text-[10px]">close</span>
+																	</button>
+																</span>
+															))}
+														</div>
 													</td>
 
 													{/* Price */}

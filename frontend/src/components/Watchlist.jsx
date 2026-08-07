@@ -166,12 +166,36 @@ export default function Watchlist({ setActiveMenu, setActiveTab, setSearchTerm }
 			.catch((err) => console.error('Error adding stock to DB:', err));
 	};
 
+	const groupedAllWatchlistItems = useMemo(() => {
+		if (!Array.isArray(allWatchlistItems)) return [];
+		const map = new Map();
+		allWatchlistItems.forEach((item) => {
+			const tickerKey = (item.ticker || item.symbol || item.stockName || '').toUpperCase();
+			if (!tickerKey) return;
+			const gName = item.groupName || 'General';
+
+			if (!map.has(tickerKey)) {
+				map.set(tickerKey, {
+					...item,
+					ticker: tickerKey,
+					groupNames: [gName]
+				});
+			} else {
+				const existing = map.get(tickerKey);
+				if (!existing.groupNames.includes(gName)) {
+					existing.groupNames.push(gName);
+				}
+			}
+		});
+		return Array.from(map.values());
+	}, [allWatchlistItems]);
+
 	const displayedItems = useMemo(() => {
-		if (activeGroupId === 'ALL') return allWatchlistItems;
+		if (activeGroupId === 'ALL') return groupedAllWatchlistItems;
 		const activeGroup = groups.find((g) => g.id === activeGroupId);
 		if (!activeGroup) return [];
-		return (activeGroup.items || []).map((i) => ({ ...i, groupName: activeGroup.name, groupId: activeGroup.id }));
-	}, [activeGroupId, groups, allWatchlistItems]);
+		return (activeGroup.items || []).map((i) => ({ ...i, groupNames: [activeGroup.name], groupName: activeGroup.name, groupId: activeGroup.id }));
+	}, [activeGroupId, groups, groupedAllWatchlistItems]);
 
 	return (
 		<div className="bg-white p-6 sm:p-8 rounded-2xl shadow-xs border border-slate-100 space-y-6" data-purpose="watchlist">
@@ -183,7 +207,7 @@ export default function Watchlist({ setActiveMenu, setActiveTab, setSearchTerm }
 						<h3 className="text-xl font-bold text-slate-800">Watchlist Stocks</h3>
 					</div>
 					<p className="text-xs text-slate-400 font-medium mt-0.5">
-						Tracked database stocks &amp; custom groups ({allWatchlistItems.length} added)
+						Tracked database stocks &amp; custom groups ({groupedAllWatchlistItems.length} added)
 					</p>
 				</div>
 			</div>
@@ -200,7 +224,7 @@ export default function Watchlist({ setActiveMenu, setActiveTab, setSearchTerm }
 						<div className="max-h-[380px] overflow-y-auto slim-scroll space-y-3 pr-1">
 							{displayedItems.map((item, index) => (
 								<div
-									key={`${item.ticker}_${item.groupName}_${index}`}
+									key={`${item.ticker}_${index}`}
 									onClick={() => handleStockClick(item)}
 									className="flex items-center justify-between p-3.5 border border-slate-100 rounded-xl hover:bg-purple-50/50 transition-all group cursor-pointer"
 									title={`Click to view ${item.ticker} in Analysis Trades`}
@@ -213,11 +237,21 @@ export default function Watchlist({ setActiveMenu, setActiveTab, setSearchTerm }
 											<div className="flex items-center gap-2">
 												<h5 className="font-bold text-sm text-slate-900 leading-tight">{item.ticker}</h5>
 											</div>
-											{item.groupName && (
-												<span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-purple-50 text-[#9462d2] border border-purple-100/60">
-													{item.groupName}
-												</span>
-											)}
+											<div className="flex flex-wrap gap-1 mt-1">
+												{(item.groupNames || [item.groupName || 'General']).map((gName) => (
+													<span key={gName} className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-purple-50 text-[#9462d2] border border-purple-100/60 inline-flex items-center gap-1">
+														<span>{gName}</span>
+														<button
+															type="button"
+															onClick={(e) => handleRemoveStockFromGroup(gName, item.ticker, e)}
+															className="hover:text-rose-600 cursor-pointer"
+															title={`Remove from ${gName}`}
+														>
+															<span className="material-symbols-outlined text-[10px]">close</span>
+														</button>
+													</span>
+												))}
+											</div>
 										</div>
 									</div>
 
@@ -237,9 +271,9 @@ export default function Watchlist({ setActiveMenu, setActiveTab, setSearchTerm }
 										</div>
 
 										<button
-											onClick={(e) => handleRemoveStockFromGroup(item.groupName, item.ticker, e)}
+											onClick={(e) => handleRemoveStockFromGroup(null, item.ticker, e)}
 											className="w-8 h-8 rounded-lg text-rose-600 hover:bg-rose-100 flex items-center justify-center transition-all opacity-80 group-hover:opacity-100 cursor-pointer"
-											title="Remove stock from database"
+											title="Remove stock from all groups"
 										>
 											<span className="material-symbols-outlined text-[18px]">bookmark_remove</span>
 										</button>

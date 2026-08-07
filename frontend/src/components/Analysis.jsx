@@ -1278,13 +1278,17 @@ export default function Analysis({
 			icon: <span className="material-symbols-outlined text-[20px] leading-none select-none">thumbs_up_down</span>
 		},
 		{
+			name: 'Sentiment',
+			icon: <span className="material-symbols-outlined text-[20px] leading-none select-none">psychology</span>
+		},
+		{
 			name: 'Tara',
 			icon: <span className="material-symbols-outlined text-[20px] leading-none select-none">webhook</span>
 		}
 	];
 	const tabs = niftyTabs;
 
-	const isNiftyView = ['Trades', 'Ownership', 'Trends', 'Breakout', 'Metrics', 'Consensus', 'Tara'].includes(activeTab);
+	const isNiftyView = ['Trades', 'Ownership', 'Trends', 'Breakout', 'Metrics', 'Consensus', 'Sentiment', 'Tara'].includes(activeTab);
 
 	const displayBreadcrumbs = isNiftyView
 		? ['Stock Insight', 'Analysis', 'Nifty Stocks', activeTab]
@@ -1452,6 +1456,7 @@ export default function Analysis({
 	const [commodityData, setCommodityData] = useState([]);
 	const [metricsData, setMetricsData] = useState([]);
 	const [consensusData, setConsensusData] = useState([]);
+	const [sentimentData, setSentimentData] = useState([]);
 	const [loadingTrades, setLoadingTrades] = useState(true);
 	const [loadingOwnership, setLoadingOwnership] = useState(true);
 	const [loadingTrends, setLoadingTrends] = useState(true);
@@ -1460,6 +1465,7 @@ export default function Analysis({
 	const [loadingCommodity, setLoadingCommodity] = useState(true);
 	const [loadingMetrics, setLoadingMetrics] = useState(true);
 	const [loadingConsensus, setLoadingConsensus] = useState(true);
+	const [loadingSentiment, setLoadingSentiment] = useState(true);
 	const [sectoralPeriodType, setSectoralPeriodType] = useState('Fortnightly');
 	const [sectoralData, setSectoralData] = useState([]);
 	const [sectoralPeriods, setSectoralPeriods] = useState([]);
@@ -1542,12 +1548,67 @@ export default function Analysis({
 
 	const handleConsensusRowClick = (item) => {
 		if (!item) return;
-		const ticker = item.ticker || item.symbol || item.stockName || '';
+		const rawSymbol = item.ticker || item.symbol || item.stockName || item.stock_name || '';
+		const ticker = rawSymbol.toUpperCase();
 		const matchedInMetrics = (metricsData || []).find(
-			(m) => m.ticker && ticker && m.ticker.toUpperCase() === ticker.toUpperCase()
+			(m) => m.ticker && ticker && m.ticker.toUpperCase() === ticker
 		);
-		const stockItem = matchedInMetrics ? { ...matchedInMetrics, ...item, ticker } : { ...item, ticker };
+		const matchedInConsensus = (consensusData || []).find(
+			(c) => c && (c.ticker || c.symbol) && (c.ticker || c.symbol).toUpperCase() === ticker
+		);
+		const stockItem = {
+			...(matchedInMetrics || {}),
+			...(matchedInConsensus || {}),
+			...item,
+			ticker,
+			stockName: item.stockName || item.stock_name || matchedInConsensus?.stock_name || matchedInMetrics?.stockName || ticker
+		};
 		setSelectedConsensusStock(stockItem);
+
+		if (ticker) {
+			fetch(`${API_BASE}/recommendations/${encodeURIComponent(ticker)}`)
+				.then((res) => res.json())
+				.then((data) => {
+					if (data && (data.total !== undefined || data.consensus_rating || data.symbol)) {
+						setSelectedConsensusStock((prev) => ({ ...(prev || {}), ...data }));
+					}
+				})
+				.catch((err) => console.error('Error fetching consensus stock details:', err));
+		}
+	};
+
+	// Modal State for Detailed Moneycontrol Sentiment & Boarders Popup
+	const [selectedSentimentStock, setSelectedSentimentStock] = useState(null);
+
+	const handleSentimentRowClick = (item) => {
+		if (!item) return;
+		const rawSymbol = item.ticker || item.symbol || item.stockName || item.stock_name || '';
+		const ticker = rawSymbol.toUpperCase();
+		const matchedInMetrics = (metricsData || []).find(
+			(m) => m.ticker && ticker && m.ticker.toUpperCase() === ticker
+		);
+		const matchedInSentiment = (sentimentData || []).find(
+			(s) => s && (s.ticker || s.symbol) && (s.ticker || s.symbol).toUpperCase() === ticker
+		);
+		const stockItem = {
+			...(matchedInMetrics || {}),
+			...(matchedInSentiment || {}),
+			...item,
+			ticker,
+			stockName: item.stockName || item.stock_name || matchedInSentiment?.stock_name || matchedInMetrics?.stockName || ticker
+		};
+		setSelectedSentimentStock(stockItem);
+
+		if (ticker) {
+			fetch(`${API_BASE}/sentiment/${encodeURIComponent(ticker)}`)
+				.then((res) => res.json())
+				.then((data) => {
+					if (data && (data.msg_count !== undefined || data.ai_summary || data.symbol)) {
+						setSelectedSentimentStock((prev) => ({ ...(prev || {}), ...data }));
+					}
+				})
+				.catch((err) => console.error('Error fetching sentiment stock details:', err));
+		}
 	};
 
 	const handleCloseStockModal = (setter) => {
@@ -2095,13 +2156,13 @@ export default function Analysis({
 		}
 	};
 
-	// Navigate between stock detail sections (Trades <-> Ownership <-> Trends <-> Breakout <-> Metrics <-> Consensus)
+	// Navigate between stock detail sections (Trades <-> Ownership <-> Trends <-> Breakout <-> Metrics <-> Consensus <-> Sentiment)
 	const handleNavigateStockSection = (stock, currentSection, target) => {
 		if (!stock) return;
 		const isGlobalOrCommodity = activeTab === 'Global' || activeTab === 'Commodity';
 		const sections = isGlobalOrCommodity
 			? ['Trends', 'Breakout']
-			: ['Trades', 'Ownership', 'Trends', 'Breakout', 'Metrics', 'Consensus'];
+			: ['Trades', 'Ownership', 'Trends', 'Breakout', 'Metrics', 'Consensus', 'Sentiment'];
 		let targetSection = target;
 		if (target === 'next' || target === 'prev') {
 			const currIndex = sections.indexOf(currentSection);
@@ -2118,6 +2179,7 @@ export default function Analysis({
 		setSelectedTrendStock(null);
 		setSelectedMetricsStock(null);
 		setSelectedConsensusStock(null);
+		setSelectedSentimentStock(null);
 
 		if (targetSection === 'Trades') {
 			handleRowClick(stock);
@@ -2131,13 +2193,15 @@ export default function Analysis({
 			handleMetricsRowClick(stock);
 		} else if (targetSection === 'Consensus') {
 			handleConsensusRowClick(stock);
+		} else if (targetSection === 'Sentiment') {
+			handleSentimentRowClick(stock);
 		}
 	};
 
 	// Keyboard arrow navigation for detail modal sections
 	useEffect(() => {
 		const handleKeyDown = (e) => {
-			const activeStock = selectedTradeStock || selectedOwnershipStock || selectedTrendStock || selectedMetricsStock || selectedConsensusStock;
+			const activeStock = selectedTradeStock || selectedOwnershipStock || selectedTrendStock || selectedMetricsStock || selectedConsensusStock || selectedSentimentStock;
 			if (!activeStock) return;
 			const activeSection = selectedTradeStock
 				? 'Trades'
@@ -2147,9 +2211,11 @@ export default function Analysis({
 						? 'Metrics'
 						: selectedConsensusStock
 							? 'Consensus'
-							: isBreakoutModal
-								? 'Breakout'
-								: 'Trends';
+							: selectedSentimentStock
+								? 'Sentiment'
+								: isBreakoutModal
+									? 'Breakout'
+									: 'Trends';
 			if (e.key === 'ArrowLeft') {
 				handleNavigateStockSection(activeStock, activeSection, 'prev');
 			} else if (e.key === 'ArrowRight') {
@@ -2158,7 +2224,7 @@ export default function Analysis({
 		};
 		window.addEventListener('keydown', handleKeyDown);
 		return () => window.removeEventListener('keydown', handleKeyDown);
-	}, [selectedTradeStock, selectedOwnershipStock, selectedTrendStock, selectedMetricsStock, selectedConsensusStock, isBreakoutModal]);
+	}, [selectedTradeStock, selectedOwnershipStock, selectedTrendStock, selectedMetricsStock, selectedConsensusStock, selectedSentimentStock, isBreakoutModal]);
 
 	// State for Ownership Period Mode (Quarterly / Yearly)
 	const [ownershipPeriodType, setOwnershipPeriodType] = useState('Quarterly');
@@ -2265,6 +2331,18 @@ export default function Analysis({
 			})
 			.catch((err) => console.error('Error fetching consensus data:', err))
 			.finally(() => setLoadingConsensus(false));
+
+		// Fetch Moneycontrol Forum & Boarders Sentiment from PostgreSQL Backend
+		setLoadingSentiment(true);
+		fetch(`${API_BASE}/sentiment`)
+			.then((res) => res.json())
+			.then((data) => {
+				if (data && data.sentiment) {
+					setSentimentData(data.sentiment);
+				}
+			})
+			.catch((err) => console.error('Error fetching sentiment data:', err))
+			.finally(() => setLoadingSentiment(false));
 	}, []);
 
 	// Fetch Ownership / Shareholding pattern when period mode changes
@@ -2443,6 +2521,11 @@ export default function Analysis({
 			if (typeof val === 'number') return val;
 			return parseInt(val, 10) || 0;
 		}
+		if (['msg_count', 'follower_count', 'buy_perc', 'sell_perc', 'hold_perc'].includes(key)) {
+			let val = item[key];
+			if (typeof val === 'number') return val;
+			return parseFloat(val) || 0;
+		}
 		if (['target_mean_price', 'target_high_price', 'target_low_price', 'targetMeanPrice', 'targetHighPrice', 'targetLowPrice'].includes(key)) {
 			const val = item[key];
 			if (!val || val === '0' || val === '0.0' || val === '—') return -999999;
@@ -2542,6 +2625,21 @@ export default function Analysis({
 			const bRank = ratingRankMap[bRating] || 99;
 			return direction === 'asc' ? aRank - bRank : bRank - aRank;
 		}
+		if (key === 'buy_perc') {
+			const aBuy = Number(a?.buy_perc || 0);
+			const bBuy = Number(b?.buy_perc || 0);
+			if (aBuy !== bBuy) {
+				return direction === 'desc' ? bBuy - aBuy : aBuy - bBuy;
+			}
+			const aHold = Number(a?.hold_perc || 0);
+			const bHold = Number(b?.hold_perc || 0);
+			if (aHold !== bHold) {
+				return direction === 'desc' ? bHold - aHold : aHold - bHold;
+			}
+			const aSell = Number(a?.sell_perc || 0);
+			const bSell = Number(b?.sell_perc || 0);
+			return direction === 'desc' ? bSell - aSell : aSell - bSell;
+		}
 		const aVal = getColumnValue(a, key);
 		const bVal = getColumnValue(b, key);
 
@@ -2577,6 +2675,7 @@ export default function Analysis({
 		const isMulti = e && (e.shiftKey || e.ctrlKey || e.metaKey);
 		const isNumericKey = [
 			'total', 'strong_buy', 'strongBuy', 'buy', 'hold', 'sell', 'strong_sell', 'strongSell',
+			'msg_count', 'follower_count', 'buy_perc', 'sell_perc', 'hold_perc',
 			'marketCap', 'price', 'volume', 'weight', 'dayChange', 'monthChange',
 			'qSalesLatest', 'qSalesPrevQ', 'qOpm', 'roce', 'plSalesGrowth', 'plNetProfit', 'plOpm', 'roe',
 			'salesVal', 'profitVal', 'roeVal', 'roceVal', 'boNum', 'fiiBuy', 'fiiSell', 'fiiNet', 'diiBuy', 'diiSell', 'diiNet'
@@ -2639,7 +2738,7 @@ export default function Analysis({
 	const findStockBySymbol = (symbolStr) => {
 		if (!symbolStr) return null;
 		const cleanSym = decodeURIComponent(symbolStr).replace(/[-_\s]/g, '').toUpperCase();
-		const allLists = [...tradesData, ...ownershipData, ...trendsData, ...breakoutsData, ...metricsData, ...globalData, ...commodityData];
+		const allLists = [...tradesData, ...ownershipData, ...trendsData, ...breakoutsData, ...metricsData, ...consensusData, ...sentimentData, ...globalData, ...commodityData];
 		const match = allLists.find((item) => {
 			const t = (item.ticker || item.symbol || item.stockName || '').replace(/[-_\s]/g, '').toUpperCase();
 			return t === cleanSym;
@@ -2650,7 +2749,7 @@ export default function Analysis({
 
 	// Push/Sync URL when a stock details modal opens or closes
 	useEffect(() => {
-		const activeStock = selectedTradeStock || selectedOwnershipStock || selectedTrendStock || selectedMetricsStock;
+		const activeStock = selectedTradeStock || selectedOwnershipStock || selectedTrendStock || selectedMetricsStock || selectedConsensusStock || selectedSentimentStock;
 		if (activeStock) {
 			const rawSymbol = activeStock.ticker || activeStock.symbol || activeStock.stockName || '';
 			if (rawSymbol) {
@@ -2665,7 +2764,7 @@ export default function Analysis({
 				window.history.pushState(null, '', '/analysis/nifty-stocks');
 			}
 		}
-	}, [selectedTradeStock, selectedOwnershipStock, selectedTrendStock, selectedMetricsStock]);
+	}, [selectedTradeStock, selectedOwnershipStock, selectedTrendStock, selectedMetricsStock, selectedConsensusStock, selectedSentimentStock]);
 
 	// Read URL on mount or browser popstate navigation to open stock details modal automatically
 	useEffect(() => {
@@ -2674,7 +2773,7 @@ export default function Analysis({
 			const match = path.match(/^\/analysis\/nifty-stocks\/([^/]+)\/details$/i);
 			if (match) {
 				const symbolParam = decodeURIComponent(match[1]);
-				const currentActiveStock = selectedTradeStock || selectedOwnershipStock || selectedTrendStock || selectedMetricsStock;
+				const currentActiveStock = selectedTradeStock || selectedOwnershipStock || selectedTrendStock || selectedMetricsStock || selectedConsensusStock || selectedSentimentStock;
 				const currentSymbol = currentActiveStock ? (currentActiveStock.ticker || currentActiveStock.symbol || currentActiveStock.stockName || '') : '';
 				if (currentSymbol.toLowerCase() !== symbolParam.toLowerCase()) {
 					const stockObj = findStockBySymbol(symbolParam);
@@ -2682,12 +2781,14 @@ export default function Analysis({
 				}
 			} else {
 				// If URL is not details (e.g. back button was pressed), close open modals
-				const currentActiveStock = selectedTradeStock || selectedOwnershipStock || selectedTrendStock || selectedMetricsStock;
+				const currentActiveStock = selectedTradeStock || selectedOwnershipStock || selectedTrendStock || selectedMetricsStock || selectedConsensusStock || selectedSentimentStock;
 				if (currentActiveStock) {
 					setSelectedTradeStock(null);
 					setSelectedOwnershipStock(null);
 					setSelectedTrendStock(null);
 					setSelectedMetricsStock(null);
+					setSelectedConsensusStock(null);
+					setSelectedSentimentStock(null);
 				}
 			}
 		};
@@ -2696,7 +2797,7 @@ export default function Analysis({
 
 		window.addEventListener('popstate', handleUrlCheck);
 		return () => window.removeEventListener('popstate', handleUrlCheck);
-	}, [tradesData, ownershipData, trendsData, breakoutsData, metricsData]);
+	}, [tradesData, ownershipData, trendsData, breakoutsData, metricsData, consensusData, sentimentData]);
 
 	const getGroupedTradesForSubTab = () => {
 		if (!modalDetails || !modalDetails[modalActiveSubTab]) return [];
@@ -2858,6 +2959,7 @@ export default function Analysis({
 	const breakoutKeys = ['highBreakout', 'lowBreakout'];
 	const metricKeys = ['qSalesLatest', 'qSalesPrevQ', 'qOpm', 'roce', 'plSalesGrowth', 'plNetProfit', 'plOpm', 'roe'];
 	const consensusKeys = ['consensus_rating', 'consensusRating', 'total', 'strong_buy', 'strongBuy', 'buy', 'hold', 'sell', 'strong_sell', 'strongSell'];
+	const sentimentKeys = ['msg_count', 'follower_count', 'buy_perc', 'sell_perc', 'hold_perc', 'ai_summary'];
 
 	const activeTradeRules = safeSortRules.filter((r) => tradeKeys.includes(r.key));
 	const activeOwnershipRules = safeSortRules.filter((r) => ownershipKeys.includes(r.key));
@@ -2865,6 +2967,7 @@ export default function Analysis({
 	const activeBreakoutRules = safeSortRules.filter((r) => breakoutKeys.includes(r.key));
 	const activeMetricRules = safeSortRules.filter((r) => metricKeys.includes(r.key));
 	const activeConsensusRules = safeSortRules.filter((r) => consensusKeys.includes(r.key));
+	const activeSentimentRules = safeSortRules.filter((r) => sentimentKeys.includes(r.key));
 
 	// Quick lookup maps by ticker
 	const tradesMap = new Map((tradesData || []).map((item) => [item.ticker, item]));
@@ -2873,6 +2976,7 @@ export default function Analysis({
 	const breakoutsMap = new Map((breakoutsData || []).map((item) => [item.ticker, item]));
 	const metricsMap = new Map((metricsData || []).map((item) => [item.ticker, item]));
 	const consensusMap = new Map((consensusData || []).map((item) => [item.ticker || item.symbol, item]));
+	const sentimentMap = new Map((sentimentData || []).map((item) => [item.ticker || item.symbol, item]));
 
 	// Unique Nifty stock tickers
 	const allNiftyTickers = Array.from(new Set([
@@ -2881,7 +2985,8 @@ export default function Analysis({
 		...(trendsData || []).map((item) => item.ticker),
 		...(breakoutsData || []).map((item) => item.ticker),
 		...(metricsData || []).map((item) => item.ticker),
-		...(consensusData || []).map((item) => item.ticker || item.symbol)
+		...(consensusData || []).map((item) => item.ticker || item.symbol),
+		...(sentimentData || []).map((item) => item.ticker || item.symbol)
 	])).filter(Boolean);
 
 	// Filter Nifty stocks by active filters across any table
@@ -2892,8 +2997,9 @@ export default function Analysis({
 		const boItem = breakoutsMap.get(ticker);
 		const metricItem = metricsMap.get(ticker);
 		const conItem = consensusMap.get(ticker);
+		const sentItem = sentimentMap.get(ticker);
 
-		const stockName = tradeItem?.stockName || ownItem?.stockName || trendItem?.stockName || boItem?.stockName || metricItem?.stockName || conItem?.stock_name || conItem?.stockName || '';
+		const stockName = tradeItem?.stockName || ownItem?.stockName || trendItem?.stockName || boItem?.stockName || metricItem?.stockName || conItem?.stock_name || conItem?.stockName || sentItem?.stock_name || sentItem?.stockName || '';
 
 		// Search term matching
 		if (searchTerm.trim()) {
@@ -2902,6 +3008,7 @@ export default function Analysis({
 				stockName.toLowerCase().includes(term) ||
 				ticker.toLowerCase().includes(term) ||
 				(conItem && calcConsensusRating(conItem).toLowerCase().includes(term)) ||
+				(sentItem && (sentItem.ai_summary || '').toLowerCase().includes(term)) ||
 				(tradeItem && (
 					getTradeString(tradeItem.insiderTrades).toLowerCase().includes(term) ||
 					getTradeString(tradeItem.bulkDeals).toLowerCase().includes(term) ||
@@ -2964,6 +3071,8 @@ export default function Analysis({
 		const bMetric = metricsMap.get(bTicker);
 		const aCon = consensusMap.get(aTicker);
 		const bCon = consensusMap.get(bTicker);
+		const aSent = sentimentMap.get(aTicker);
+		const bSent = sentimentMap.get(bTicker);
 
 		for (const rule of safeSortRules) {
 			let aObj = null;
@@ -2987,10 +3096,13 @@ export default function Analysis({
 			} else if (consensusKeys.includes(rule.key)) {
 				aObj = aCon;
 				bObj = bCon;
+			} else if (sentimentKeys.includes(rule.key)) {
+				aObj = aSent;
+				bObj = bSent;
 			} else {
 				// General fallback (e.g. stockName, marketCap, price)
-				aObj = aTrade || aOwn || aTrend || aBo || aMetric || aCon;
-				bObj = bTrade || bOwn || bTrend || bBo || bMetric || bCon;
+				aObj = aTrade || aOwn || aTrend || aBo || aMetric || aCon || aSent;
+				bObj = bTrade || bOwn || bTrend || bBo || bMetric || bCon || bSent;
 			}
 
 			if (aObj || bObj) {
@@ -3012,6 +3124,8 @@ export default function Analysis({
 	const filteredMetrics = sortedMetrics;
 	const sortedConsensus = masterFilteredTickers.map((t) => consensusMap.get(t)).filter(Boolean);
 	const filteredConsensus = sortedConsensus;
+	const sortedSentiment = masterFilteredTickers.map((t) => sentimentMap.get(t)).filter(Boolean);
+	const filteredSentiment = sortedSentiment;
 
 	const filteredGlobal = useMemo(() => {
 		if (!searchTerm.trim()) return globalData;
@@ -3392,19 +3506,21 @@ export default function Analysis({
 						? filteredMetrics.length
 						: activeTab === 'Consensus'
 							? filteredConsensus.length
-							: activeTab === 'Breakout'
-								? filteredBreakouts.length
-								: activeTab === 'Tara'
-									? filteredTara.length
-									: activeTab === 'Global'
-										? filteredGlobal.length
-										: activeTab === 'Commodity'
-											? filteredCommodity.length
-											: activeTab === 'Sectoral'
-												? filteredSectoral.length
-												: activeTab === 'CashFlow'
-													? filteredCashFlow.length
-													: 0;
+							: activeTab === 'Sentiment'
+								? filteredSentiment.length
+								: activeTab === 'Breakout'
+									? filteredBreakouts.length
+									: activeTab === 'Tara'
+										? filteredTara.length
+										: activeTab === 'Global'
+											? filteredGlobal.length
+											: activeTab === 'Commodity'
+												? filteredCommodity.length
+												: activeTab === 'Sectoral'
+													? filteredSectoral.length
+													: activeTab === 'CashFlow'
+														? filteredCashFlow.length
+														: 0;
 
 	const totalTrades = filteredTrades.length;
 	const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE) || 1;
@@ -3420,6 +3536,7 @@ export default function Analysis({
 	const currentCashFlow = sortedCashFlow.slice(startIndex, endIndex);
 	const currentMetrics = sortedMetrics.slice(startIndex, endIndex);
 	const currentConsensus = sortedConsensus.slice(startIndex, endIndex);
+	const currentSentiment = sortedSentiment.slice(startIndex, endIndex);
 	const currentTara = sortedTara.slice(startIndex, endIndex);
 
 	const renderBreakoutCell = (val, type) => {
@@ -3993,6 +4110,8 @@ export default function Analysis({
 							<thead className="sticky top-0 z-20 bg-[#F1F5F9] shadow-xs">
 								<tr className="bg-[#F1F5F9] text-slate-700 text-sm font-semibold">
 									{renderSortHeader('stockName', 'Stock Name', true, false, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'sticky left-0 z-30 min-w-[220px] bg-[#F1F5F9]')}
+									{renderSortHeader('marketCap', 'Market Cap', false, false, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'sticky left-[220px] z-30 min-w-[130px] bg-[#F1F5F9]')}
+									{renderSortHeader('price', 'Price', false, false, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'sticky left-[350px] z-30 min-w-[110px] bg-[#F1F5F9]')}
 									{renderSortHeader('consensus_rating', 'Consensus Rating', false, false, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'min-w-[150px]')}
 									{renderSortHeader('total', 'Total Analysts', false, false, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'min-w-[120px]', true)}
 									{renderSortHeader('strong_buy', 'Strong Buy', false, false, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'min-w-[110px]', true)}
@@ -4027,20 +4146,16 @@ export default function Analysis({
 													: 'bg-rose-50 text-rose-700 border-rose-200 font-bold';
 											}
 
-											const fmtPrice = (p) => {
-												if (!p || p === '0' || p === '0.0' || p === '—' || p === '-') return '—';
-												const num = parseFloat(String(p).replace(/,/g, ''));
-												if (isNaN(num) || num <= 0) return '—';
-												return `₹${num.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-											};
-
 											const stockName = item.stock_name || item.stockName || item.symbol || item.ticker || '';
 											const ticker = item.symbol || item.ticker || '';
+											const matchedData = metricsMap.get(ticker) || tradesMap.get(ticker) || ownershipMap.get(ticker);
+											const marketCapVal = item.marketCap || matchedData?.marketCap || '—';
+											const priceVal = item.price || matchedData?.price || '—';
 
 											return (
 												<tr
 													key={item.id || ticker}
-													onClick={() => handleConsensusRowClick({ ...item, ticker, stockName })}
+													onClick={() => handleConsensusRowClick({ ...item, ticker, stockName, marketCap: marketCapVal, price: priceVal })}
 													className="hover:bg-purple-50/40 transition-colors cursor-pointer group"
 												>
 													{/* Stock Name (Frozen column 1) */}
@@ -4050,8 +4165,18 @@ export default function Analysis({
 																<span className="font-bold text-slate-800 text-base block">{stockName}</span>
 																<span className="text-xs text-slate-400 font-medium">{ticker}</span>
 															</div>
-															{renderWatchlistIconBtn({ ticker, stockName })}
+															{renderWatchlistIconBtn({ ticker, stockName, marketCap: marketCapVal, price: priceVal })}
 														</div>
+													</td>
+
+													{/* Market Cap (Frozen column 2) */}
+													<td className="py-2.5 px-4 text-sm font-semibold text-slate-700 whitespace-nowrap sticky left-[220px] z-10 bg-white group-hover:bg-[#f8f5fd] transition-colors min-w-[130px]">
+														{marketCapVal}
+													</td>
+
+													{/* Price (Frozen column 3) */}
+													<td className="py-2.5 px-4 text-sm font-bold text-slate-800 whitespace-nowrap sticky left-[350px] z-10 bg-white group-hover:bg-[#f8f5fd] transition-colors min-w-[110px]">
+														{priceVal}
 													</td>
 
 													{/* Consensus Rating */}
@@ -4097,6 +4222,113 @@ export default function Analysis({
 											<tr>
 												<td colSpan="12" className="py-12 text-center text-slate-400 text-sm font-medium">
 													No consensus recommendations data found matching "{searchTerm}"
+												</td>
+											</tr>
+										)}
+									</>
+								)}
+							</tbody>
+						</table>
+					) : activeTab === 'Sentiment' ? (
+						/* Moneycontrol Forum & Boarders Sentiment Table View */
+						<table className="w-full text-left border-collapse">
+							<thead className="sticky top-0 z-20 bg-[#F1F5F9] shadow-xs">
+								<tr className="bg-[#F1F5F9] text-slate-700 text-sm font-semibold">
+									{renderSortHeader('stockName', 'Stock Name', true, false, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'sticky left-0 z-30 min-w-[220px] bg-[#F1F5F9]')}
+									{renderSortHeader('marketCap', 'Market Cap', false, false, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'sticky left-[220px] z-30 min-w-[130px] bg-[#F1F5F9]')}
+									{renderSortHeader('price', 'Price', false, false, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'sticky left-[350px] z-30 min-w-[110px] bg-[#F1F5F9]')}
+									{renderSortHeader('buy_perc', 'Forum Sentimeter', false, false, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'min-w-[170px]', true)}
+									{renderSortHeader('msg_count', 'Messages', false, false, false, 'py-3.5', 1, 'bg-[#F1F5F9]', 'min-w-[120px]', true)}
+									<th className="py-3.5 px-4 font-semibold text-slate-700 bg-[#F1F5F9] sticky top-0 z-20 text-left min-w-[280px] rounded-r-xl select-none">
+										<span>AI Summary</span>
+									</th>
+								</tr>
+							</thead>
+							<tbody className="divide-y divide-slate-100/80">
+								{loadingSentiment ? (
+									<tr>
+										<td colSpan="12" className="py-6">
+											<LottieLoader text="Loading forum sentiment & boarders..." width="200px" height="200px" />
+										</td>
+									</tr>
+								) : (
+									<>
+										{currentSentiment.map((item) => {
+											const stockName = item.stock_name || item.stockName || item.symbol || item.ticker || '';
+											const ticker = item.symbol || item.ticker || '';
+											const matchedData = metricsMap.get(ticker) || tradesMap.get(ticker) || ownershipMap.get(ticker);
+											const marketCapVal = item.marketCap || matchedData?.marketCap || '—';
+											const priceVal = item.price || matchedData?.price || '—';
+
+											const buy = Number(item.buy_perc || 0);
+											const sell = Number(item.sell_perc || 0);
+											const hold = Number(item.hold_perc || 0);
+											const msgCount = Number(item.msg_count || 0);
+											const summaryText = item.ai_summary || '';
+
+											let topText = `${buy}% Buy`;
+											let badgeStyle = 'bg-emerald-50 text-emerald-700 border-emerald-200 font-bold';
+
+											if (sell > buy && sell >= hold) {
+												topText = `${sell}% Sell`;
+												badgeStyle = 'bg-rose-50 text-rose-700 border-rose-200 font-bold';
+											} else if (hold > buy && hold > sell) {
+												topText = `${hold}% Hold`;
+												badgeStyle = 'bg-slate-100 text-slate-700 border-slate-200 font-medium';
+											}
+
+											return (
+												<tr
+													key={item.id || ticker}
+													onClick={() => handleSentimentRowClick({ ...item, ticker, stockName, marketCap: marketCapVal, price: priceVal })}
+													className="hover:bg-purple-50/40 transition-colors cursor-pointer group"
+												>
+													{/* Stock Name (Frozen column 1) */}
+													<td className="py-2.5 px-4 sticky left-0 z-10 bg-white group-hover:bg-[#f8f5fd] transition-colors min-w-[220px]">
+														<div className="flex items-center justify-between gap-2">
+															<div>
+																<span className="font-bold text-slate-800 text-base block">{stockName}</span>
+																<span className="text-xs text-slate-400 font-medium">{ticker}</span>
+															</div>
+															{renderWatchlistIconBtn({ ticker, stockName, marketCap: marketCapVal, price: priceVal })}
+														</div>
+													</td>
+
+													{/* Market Cap (Frozen column 2) */}
+													<td className="py-2.5 px-4 text-sm font-semibold text-slate-700 whitespace-nowrap sticky left-[220px] z-10 bg-white group-hover:bg-[#f8f5fd] transition-colors min-w-[130px]">
+														{marketCapVal}
+													</td>
+
+													{/* Price (Frozen column 3) */}
+													<td className="py-2.5 px-4 text-sm font-bold text-slate-800 whitespace-nowrap sticky left-[350px] z-10 bg-white group-hover:bg-[#f8f5fd] transition-colors min-w-[110px]">
+														{priceVal}
+													</td>
+
+													{/* Forum Sentimeter */}
+													<td className="py-2.5 px-4 text-xs text-center whitespace-nowrap">
+														<span className={`px-2.5 py-1 rounded-lg border inline-block text-center shadow-2xs ${badgeStyle}`}>
+															{topText}
+														</span>
+													</td>
+
+													{/* Messages */}
+													<td className="py-2.5 px-4 text-sm font-bold text-slate-800 text-center whitespace-nowrap">
+														{msgCount.toLocaleString('en-IN')}
+													</td>
+
+													{/* AI Summary */}
+													<td className="py-2.5 px-4 text-sm text-slate-600 max-w-[320px]">
+														<div className="truncate font-medium text-slate-700" title={summaryText}>
+															{summaryText ? (summaryText.slice(0, 75) + (summaryText.length > 75 ? '...' : '')) : 'No summary available'}
+														</div>
+													</td>
+												</tr>
+											);
+										})}
+										{filteredSentiment.length === 0 && (
+											<tr>
+												<td colSpan="12" className="py-12 text-center text-slate-400 text-sm font-medium">
+													No forum sentiment data found matching "{searchTerm}"
 												</td>
 											</tr>
 										)}
@@ -5096,8 +5328,8 @@ export default function Analysis({
 					)}
 				</div>
 
-				{/* Pagination Controls for Trades, Ownership, Trends, Breakout, Metrics, Consensus, Tara, Global, Commodity & CashFlow Tabs */}
-				{(activeTab === 'Trades' || activeTab === 'Ownership' || activeTab === 'Trends' || activeTab === 'Breakout' || activeTab === 'Metrics' || activeTab === 'Consensus' || activeTab === 'Tara' || activeTab === 'Global' || activeTab === 'Commodity' || activeTab === 'CashFlow') && (
+				{/* Pagination Controls for Trades, Ownership, Trends, Breakout, Metrics, Consensus, Sentiment, Tara, Global, Commodity & CashFlow Tabs */}
+				{(activeTab === 'Trades' || activeTab === 'Ownership' || activeTab === 'Trends' || activeTab === 'Breakout' || activeTab === 'Metrics' || activeTab === 'Consensus' || activeTab === 'Sentiment' || activeTab === 'Tara' || activeTab === 'Global' || activeTab === 'Commodity' || activeTab === 'CashFlow' || activeTab === 'Sectoral') && (
 					<div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-slate-500">
 						<div>
 							Showing <span className="font-semibold text-slate-900">{totalItems > 0 ? startIndex + 1 : 0}</span> to <span className="font-semibold text-slate-900">{endIndex}</span> of <span className="font-semibold text-slate-900">{totalItems}</span> results
@@ -6130,6 +6362,141 @@ export default function Analysis({
 							})()}
 						</div>
 
+					</div>
+				</div>,
+				document.body
+			)}
+
+			{/* Detailed Moneycontrol Sentiment & Boarders Popup */}
+			{selectedSentimentStock && ReactDOM.createPortal(
+				<div className="fixed inset-0 top-0 bottom-0 left-0 right-0 w-screen h-screen z-[9999] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs">
+					{/* Left Move Icon (<) */}
+					<button
+						onClick={() => handleNavigateStockSection(selectedSentimentStock, 'Sentiment', 'prev')}
+						title="Move to Previous Section (Consensus Recommendations)"
+						className="absolute left-6 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/95 hover:bg-white shadow-2xl border border-slate-200 text-slate-700 hover:text-[#9462d2] hover:border-purple-300 flex items-center justify-center transition-all cursor-pointer z-[10000] hover:scale-110 active:scale-95 group"
+					>
+						<span className="material-symbols-outlined text-[28px] group-hover:-translate-x-0.5 transition-transform">chevron_left</span>
+					</button>
+
+					{/* Right Move Icon (>) */}
+					<button
+						onClick={() => handleNavigateStockSection(selectedSentimentStock, 'Sentiment', 'next')}
+						title="Move to Next Section (Trades)"
+						className="absolute right-6 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-white/95 hover:bg-white shadow-2xl border border-slate-200 text-slate-700 hover:text-[#9462d2] hover:border-purple-300 flex items-center justify-center transition-all cursor-pointer z-[10000] hover:scale-110 active:scale-95 group"
+					>
+						<span className="material-symbols-outlined text-[28px] group-hover:translate-x-0.5 transition-transform">chevron_right</span>
+					</button>
+
+					<div className="bg-white rounded-2xl shadow-2xl max-w-[85%] w-full max-h-[90vh] flex flex-col border border-slate-100 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+						{/* Modal Header */}
+						<div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+							<div className="flex items-center gap-3">
+								<div className="w-10 h-10 rounded-xl bg-purple-100 text-[#9462d2] flex items-center justify-center font-bold shadow-xs">
+									<span className="material-symbols-outlined text-[22px]">psychology</span>
+								</div>
+								<div>
+									<div className="flex items-center gap-2">
+										<h3 className="font-extrabold text-slate-900 text-xl tracking-tight">
+											{selectedSentimentStock.stockName || selectedSentimentStock.stock_name}
+										</h3>
+										<span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-500 border border-slate-200">
+											{selectedSentimentStock.ticker || selectedSentimentStock.symbol}
+										</span>
+									</div>
+									<div className="flex items-center gap-3 text-xs text-slate-500 font-medium mt-0.5">
+										{selectedSentimentStock.marketCap && (
+											<span>Market Cap: <strong className="text-slate-800">{selectedSentimentStock.marketCap}</strong></span>
+										)}
+										{selectedSentimentStock.marketCap && selectedSentimentStock.price && <span>•</span>}
+										{selectedSentimentStock.price && (
+											<span>Current Price: <strong className="text-slate-800">{selectedSentimentStock.price}</strong></span>
+										)}
+									</div>
+								</div>
+							</div>
+							<button
+								onClick={() => handleCloseStockModal(setSelectedSentimentStock)}
+								className="w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer"
+							>
+								<span className="material-symbols-outlined text-[20px]">close</span>
+							</button>
+						</div>
+
+						{/* Modal Content */}
+						<div className="p-6 overflow-y-auto space-y-6 max-h-[calc(90vh-80px)]">
+							{/* Top Metrics Grid */}
+							<div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+								{/* Message Count Card */}
+								<div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 flex items-center gap-3">
+									<div className="w-10 h-10 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
+										<span className="material-symbols-outlined text-[20px]">forum</span>
+									</div>
+									<div>
+										<span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Total Messages</span>
+										<span className="text-xl font-extrabold text-slate-900 block mt-0.5">
+											{Number(selectedSentimentStock.msg_count || 0).toLocaleString('en-IN')}
+										</span>
+									</div>
+								</div>
+
+								{/* Followers Card */}
+								<div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 flex items-center gap-3">
+									<div className="w-10 h-10 rounded-lg bg-purple-100 text-purple-700 flex items-center justify-center font-bold">
+										<span className="material-symbols-outlined text-[20px]">group</span>
+									</div>
+									<div>
+										<span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Boarder Followers</span>
+										<span className="text-xl font-extrabold text-slate-900 block mt-0.5">
+											{Number(selectedSentimentStock.follower_count || 0).toLocaleString('en-IN')}
+										</span>
+									</div>
+								</div>
+
+								{/* Sentimeter Card */}
+								<div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 space-y-2">
+									<div className="flex items-center justify-between">
+										<span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Forum Sentimeter</span>
+										<span className="text-xs font-bold text-emerald-700">{selectedSentimentStock.buy_perc || 0}% Bullish</span>
+									</div>
+									<div className="w-full h-2.5 bg-slate-200 rounded-full overflow-hidden flex">
+										<div style={{ width: `${selectedSentimentStock.buy_perc || 0}%` }} className="bg-emerald-500 h-full" title={`Buy: ${selectedSentimentStock.buy_perc}%`} />
+										<div style={{ width: `${selectedSentimentStock.sell_perc || 0}%` }} className="bg-rose-500 h-full" title={`Sell: ${selectedSentimentStock.sell_perc}%`} />
+										<div style={{ width: `${selectedSentimentStock.hold_perc || 0}%` }} className="bg-slate-400 h-full" title={`Hold: ${selectedSentimentStock.hold_perc}%`} />
+									</div>
+									<div className="flex justify-between text-[11px] font-semibold text-slate-600">
+										<span className="text-emerald-700">Buy: {selectedSentimentStock.buy_perc || 0}%</span>
+										<span className="text-rose-700">Sell: {selectedSentimentStock.sell_perc || 0}%</span>
+										<span className="text-slate-600">Hold: {selectedSentimentStock.hold_perc || 0}%</span>
+									</div>
+								</div>
+							</div>
+
+							{/* AI Boarder Sentiment Summary Card */}
+							<div className="bg-gradient-to-br from-purple-50/40 via-white to-slate-50 p-6 rounded-2xl border border-purple-100/80 shadow-xs space-y-4">
+								<div className="flex items-center justify-between border-b border-purple-100/60 pb-3">
+									<div className="flex items-center gap-2">
+										<span className="material-symbols-outlined text-[#9462d2] text-[22px]">auto_awesome</span>
+										<h4 className="font-extrabold text-slate-900 text-lg">Hear What Our Boarders Have to Say</h4>
+									</div>
+									<span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-purple-100/70 text-purple-800 border border-purple-200/60 flex items-center gap-1">
+										<span className="material-symbols-outlined text-[14px]">smart_toy</span>
+										AI-Generated Sentiment
+									</span>
+								</div>
+
+								<div className="text-sm leading-relaxed text-slate-700 whitespace-pre-line font-normal space-y-2">
+									{selectedSentimentStock.ai_summary ? (
+										selectedSentimentStock.ai_summary
+									) : (
+										<div className="py-8 text-center text-slate-400 text-sm font-medium flex flex-col items-center justify-center gap-2">
+											<span className="material-symbols-outlined text-4xl text-slate-300">chat_bubble_outline</span>
+											<span>No AI boarder summary available for {selectedSentimentStock.stockName || selectedSentimentStock.symbol}</span>
+										</div>
+									)}
+								</div>
+							</div>
+						</div>
 					</div>
 				</div>,
 				document.body

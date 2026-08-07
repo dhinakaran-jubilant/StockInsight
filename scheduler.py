@@ -44,7 +44,17 @@ SCRAPERS = [
     "scrape_global_historical.py",
     "scrape_sectoral_activity.py",
     "scrape_commodities.py",
+    "scrape_moneycontrol_boarders.py",
 ]
+
+COMPANY_SUPPORTED_SCRAPERS = [
+    "scrape_trade_scrapy.py",
+    "scrape_historical.py",
+    "scrape_consensus_recommendation.py",
+    "scrape_moneycontrol_boarders.py"
+]
+
+BOARDERS_HOURS = [8, 10, 12, 14, 16, 18]
 
 
 def resolve_venv_python():
@@ -71,6 +81,45 @@ def resolve_venv_python():
     return sys.executable
 
 
+def run_single_scraper(script_name, python_exec=None, company=None):
+    """Executes a single scraper script from backend/scrape/."""
+    if python_exec is None:
+        python_exec = resolve_venv_python()
+
+    script_path = SCRAPE_DIR / script_name
+    if not script_path.exists():
+        logging.error(f"Script not found: {script_path}")
+        return False
+
+    cmd = [python_exec, str(script_path)]
+    if company and script_name in COMPANY_SUPPORTED_SCRAPERS:
+        cmd.extend(["--company", company.upper()])
+
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    logging.info(f"\n---> Running single scraper: {script_name}{' (--company ' + company.upper() + ')' if company and script_name in COMPANY_SUPPORTED_SCRAPERS else ''} at {now_str}...")
+    t_start = time.time()
+
+    try:
+        subprocess.run(
+            cmd,
+            cwd=str(SCRAPE_DIR),
+            capture_output=False,
+            text=True,
+            check=True
+        )
+        duration = round(time.time() - t_start, 2)
+        logging.info(f"[SUCCESS] {script_name} completed in {duration}s")
+        return True
+    except subprocess.CalledProcessError as e:
+        duration = round(time.time() - t_start, 2)
+        logging.error(f"[ERROR] {script_name} failed with exit code {e.returncode} ({duration}s)")
+        return False
+    except Exception as e:
+        duration = round(time.time() - t_start, 2)
+        logging.error(f"[EXCEPTION] Failed to run {script_name}: {e} ({duration}s)")
+        return False
+
+
 def run_all_scrapers(python_exec=None, company=None):
     """Executes scrapers sequentially in order (with optional single company filtering)."""
     if python_exec is None:
@@ -95,10 +144,10 @@ def run_all_scrapers(python_exec=None, company=None):
             continue
 
         cmd = [python_exec, str(script_path)]
-        if company and script_name in ["scrape_trade_scrapy.py", "scrape_historical.py", "scrape_consensus_recommendation.py"]:
+        if company and script_name in COMPANY_SUPPORTED_SCRAPERS:
             cmd.extend(["--company", company.upper()])
 
-        logging.info(f"\n---> [{index}/{len(SCRAPERS)}] Running: {script_name}{' (--company ' + company.upper() + ')' if company and script_name in ['scrape_trade_scrapy.py', 'scrape_historical.py', 'scrape_consensus_recommendation.py'] else ''}...")
+        logging.info(f"\n---> [{index}/{len(SCRAPERS)}] Running: {script_name}{' (--company ' + company.upper() + ')' if company and script_name in COMPANY_SUPPORTED_SCRAPERS else ''}...")
         t_start = time.time()
 
         try:
@@ -132,24 +181,40 @@ def run_all_scrapers(python_exec=None, company=None):
     logging.info("=" * 65 + "\n")
 
 
-def get_next_run_time(now=None):
-    """Calculates next 5:00 AM run time on Mon-Sat (skipping Sunday = weekday 6)."""
+def get_next_scheduled_event(now=None):
+    """
+    Returns (next_run_datetime, event_type) for the next scheduled task.
+    event_type can be 'FULL_BATCH' (5:00 AM) or 'BOARDERS' (8:00 AM - 6:00 PM every 2 hours).
+    Skips Sundays (weekday 6).
+    """
     if now is None:
         now = datetime.now()
 
-    target = now.replace(hour=5, minute=0, second=0, microsecond=0)
+    candidates = []
+    
+    # Check next 7 days for scheduled events
+    for day_offset in range(8):
+        day_date = (now + timedelta(days=day_offset)).date()
+        if day_date.weekday() == 6:  # Skip Sunday
+            continue
 
-    if now >= target:
-        target += timedelta(days=1)
+        # 5:00 AM full batch
+        dt_full = datetime.combine(day_date, datetime.min.time()).replace(hour=5, minute=0, second=0, microsecond=0)
+        if dt_full > now:
+            candidates.append((dt_full, "FULL_BATCH"))
 
-    while target.weekday() == 6:  # Skip Sunday
-        target += timedelta(days=1)
+        # 2-hour boarders scrapes between 8am and 6pm (8, 10, 12, 14, 16, 18)
+        for h in BOARDERS_HOURS:
+            dt_b = datetime.combine(day_date, datetime.min.time()).replace(hour=h, minute=0, second=0, microsecond=0)
+            if dt_b > now:
+                candidates.append((dt_b, "BOARDERS"))
 
-    return target
+    candidates.sort(key=lambda x: x[0])
+    return candidates[0]
 
 
 def start_scheduler_loop(python_exec=None):
-    """Loop that triggers scrapers every Mon-Sat at 5:00 AM."""
+    """Loop that triggers daily scrapers at 5:00 AM and Moneycontrol Boarders every 2h (8 AM - 6 PM, Mon-Sat)."""
     if python_exec is None:
         python_exec = resolve_venv_python()
 
@@ -158,20 +223,27 @@ def start_scheduler_loop(python_exec=None):
     print("=" * 65)
     print("  StockInsight - Scraper Scheduler")
     print("=" * 65)
-    print("  • Schedule: Daily 05:00 AM (Monday - Saturday, skipping Sunday)")
+    print("  • Daily Full Batch: 05:00 AM (Mon-Sat, skipping Sunday)")
+    print("  • Moneycontrol Boarders: Every 2h between 08:00 AM - 06:00 PM (Mon-Sat)")
     print("  • Log File: backend/scrapers.log")
     print("=" * 65 + "\n")
 
     while True:
-        next_run = get_next_run_time()
+        next_run, event_type = get_next_scheduled_event()
         now = datetime.now()
-        seconds_to_wait = (next_run - now).total_seconds()
+        seconds_to_wait = max(0, (next_run - now).total_seconds())
         day_name = days_map[next_run.weekday()]
+        event_label = "Daily Full Scrape Batch" if event_type == "FULL_BATCH" else "Moneycontrol Boarders Scraper"
 
-        logging.info(f"[Scheduler] Next scrape scheduled at: {next_run.strftime('%Y-%m-%d %H:%M:%S')} ({day_name})")
+        logging.info(f"[Scheduler] Next job ({event_label}) scheduled at: {next_run.strftime('%Y-%m-%d %H:%M:%S')} ({day_name})")
 
         time.sleep(seconds_to_wait)
-        run_all_scrapers(python_exec=python_exec)
+
+        if event_type == "FULL_BATCH":
+            run_all_scrapers(python_exec=python_exec)
+        elif event_type == "BOARDERS":
+            run_single_scraper("scrape_moneycontrol_boarders.py", python_exec=python_exec)
+
         time.sleep(10)
 
 
@@ -179,7 +251,7 @@ def main():
     parser = argparse.ArgumentParser(description="StockInsight Scraper Scheduler & Executor")
     parser.add_argument("--now", action="store_true", help="Run scrapers immediately right now")
     parser.add_argument("--company", default=None, help="Specific company/stock ticker (e.g. RELIANCE, BHARATFORG)")
-    parser.add_argument("--schedule", action="store_true", help="Continue running the 5:00 AM daily scheduler after batch completes")
+    parser.add_argument("--schedule", action="store_true", help="Continue running the scheduler loop after batch completes")
     args = parser.parse_args()
 
     python_exec = resolve_venv_python()
@@ -189,7 +261,7 @@ def main():
         run_all_scrapers(python_exec=python_exec, company=args.company)
 
         if args.schedule:
-            logging.info("[+] Starting 5:00 AM daily scraper scheduler loop...")
+            logging.info("[+] Starting scraper scheduler loop...")
             start_scheduler_loop(python_exec=python_exec)
         else:
             logging.info("[+] Scraper batch completed.")

@@ -272,7 +272,7 @@ def upsert_consensus_records(conn, records: list) -> int:
 
     with conn.cursor() as cur:
         cur.execute("SELECT symbol FROM consensus_recommendations;")
-        existing_symbols = {row[0] for row in cur.fetchall() if row[0]}
+        existing_symbols = {row[0].upper() for row in cur.fetchall() if row[0]}
 
         update_rows = []
         insert_rows = []
@@ -280,7 +280,7 @@ def upsert_consensus_records(conn, records: list) -> int:
         for r in records:
             if not r or not r.get("symbol"):
                 continue
-            sym = str(r["symbol"])[:50]
+            sym = str(r["symbol"]).strip().upper()[:50]
             val = (
                 int(r.get("total", 0)),
                 int(r.get("strong_buy", 0)),
@@ -316,7 +316,7 @@ def upsert_consensus_records(conn, records: list) -> int:
                     total, strong_buy, buy, hold, sell, strong_sell,
                     consensus_rating, target_mean_price, target_high_price, target_low_price, symbol
                 )
-                WHERE consensus_recommendations.symbol = data.symbol::varchar;
+                WHERE UPPER(consensus_recommendations.symbol) = UPPER(data.symbol);
             """
             execute_values(cur, update_sql, update_rows)
 
@@ -324,7 +324,7 @@ def upsert_consensus_records(conn, records: list) -> int:
             insert_sql = """
                 INSERT INTO consensus_recommendations (
                     symbol, total, strong_buy, buy, hold, sell, strong_sell,
-                    consensus_rating, target_mean_price, target_high_price, target_low_price
+                    consensus_rating, target_mean_price, target_high_price, target_low_price, scraped_at
                 ) VALUES %s
                 ON CONFLICT (symbol) DO UPDATE SET
                     total               = EXCLUDED.total,
@@ -339,9 +339,10 @@ def upsert_consensus_records(conn, records: list) -> int:
                     target_low_price    = EXCLUDED.target_low_price,
                     scraped_at          = NOW();
             """
-            execute_values(cur, insert_sql, insert_rows)
+            insert_tuples = [row + (datetime.now(),) for row in insert_rows]
+            execute_values(cur, insert_sql, insert_tuples)
 
-        logging.info(f"[DB] Processed {len(records)} record(s): {len(update_rows)} updated, {len(insert_rows)} added.")
+        logging.info(f"[DB] Consensus recommendations processed {len(records)} record(s): {len(update_rows)} updated, {len(insert_rows)} inserted.")
 
     conn.commit()
     return len(update_rows) + len(insert_rows)

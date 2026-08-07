@@ -58,7 +58,7 @@ export default function Sidebar({
 		}
 	];
 
-	const isNiftyTab = ['Trades', 'Ownership', 'Trends', 'Breakout', 'Metrics', 'Consensus', 'Tara'].includes(activeTab);
+	const isNiftyTab = ['Trades', 'Ownership', 'Trends', 'Breakout', 'Metrics', 'Consensus', 'Sentiment', 'Tara'].includes(activeTab);
 
 	return (
 		<aside

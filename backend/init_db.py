@@ -446,6 +446,39 @@ TABLE_DEFINITIONS = [
             ("target_low_price", "VARCHAR(50)"),
             ("scraped_at", "TIMESTAMP DEFAULT NOW()"),
         ]
+    },
+    {
+        "table": "moneycontrol_boarders",
+        "create": """
+            CREATE TABLE IF NOT EXISTS moneycontrol_boarders (
+                id                  SERIAL PRIMARY KEY,
+                symbol              VARCHAR(50) UNIQUE NOT NULL,
+                stock_name          VARCHAR(255),
+                sc_id               VARCHAR(50),
+                topic_id            VARCHAR(50),
+                msg_count           INTEGER DEFAULT 0,
+                follower_count      INTEGER DEFAULT 0,
+                buy_perc            INTEGER DEFAULT 0,
+                sell_perc           INTEGER DEFAULT 0,
+                hold_perc           INTEGER DEFAULT 0,
+                ai_summary          TEXT,
+                scraped_at          TIMESTAMP DEFAULT NOW()
+            );
+        """,
+        "columns": [
+            ("id", "SERIAL"),
+            ("symbol", "VARCHAR(50)"),
+            ("stock_name", "VARCHAR(255)"),
+            ("sc_id", "VARCHAR(50)"),
+            ("topic_id", "VARCHAR(50)"),
+            ("msg_count", "INTEGER"),
+            ("follower_count", "INTEGER"),
+            ("buy_perc", "INTEGER"),
+            ("sell_perc", "INTEGER"),
+            ("hold_perc", "INTEGER"),
+            ("ai_summary", "TEXT"),
+            ("scraped_at", "TIMESTAMP DEFAULT NOW()"),
+        ]
     }
 ]
 

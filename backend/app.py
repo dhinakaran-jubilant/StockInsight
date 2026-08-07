@@ -78,7 +78,8 @@ def get_last_updated():
                     (SELECT MAX(scraped_at) FROM commodity_history) as commodities,
                     (SELECT MAX(scraped_at) FROM sectoral_activity) as sectoral,
                     (SELECT MAX(scraped_at) FROM fii_dii_cash) as cashflow,
-                    (SELECT MAX(scraped_at) FROM consensus_recommendations) as recommendations;
+                    (SELECT MAX(scraped_at) FROM consensus_recommendations) as recommendations,
+                    (SELECT MAX(scraped_at) FROM moneycontrol_boarders) as sentiment;
             """)
             row = cur.fetchone()
         conn.close()
@@ -106,6 +107,9 @@ def get_last_updated():
             "sectoral": fmt(row[6] if row else None),
             "cashflow": fmt(row[7] if row else None),
             "recommendations": fmt(row[8] if row else None),
+            "consensus": fmt(row[8] if row else None),
+            "sentiment": fmt(row[9] if row else None),
+            "boarders": fmt(row[9] if row else None),
             "global_max": fmt(max_dt)
         }
 
@@ -1570,7 +1574,7 @@ def add_global_index():
 
 @app.route('/api/recommendations', methods=['GET'])
 def get_consensus_recommendations():
-    """Return all consensus recommendations joined with stock_name from nifty_750."""
+    """Return all consensus recommendations joined with stock_name, market_cap, and price from nifty_750."""
     try:
         conn = get_db_conn()
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -1579,6 +1583,8 @@ def get_consensus_recommendations():
                     c.id,
                     c.symbol,
                     COALESCE(n.stock_name, c.symbol) as stock_name,
+                    COALESCE(NULLIF(n.market_cap, ''), '') as market_cap,
+                    COALESCE(NULLIF(n.price, ''), '') as price,
                     c.total,
                     c.strong_buy,
                     c.buy,
@@ -1598,6 +1604,9 @@ def get_consensus_recommendations():
         conn.close()
 
         for r in rows:
+            r['market_cap'] = format_mcap(r.get('market_cap'))
+            r['marketCap'] = r['market_cap']
+            r['price'] = format_price(r.get('price'))
             if r.get('scraped_at'):
                 r['scraped_at'] = r['scraped_at'].strftime("%d %b %Y, %I:%M %p")
 
@@ -1615,30 +1624,164 @@ def get_symbol_consensus_recommendations(symbol):
             cur.execute("""
                 SELECT 
                     c.id,
-                    c.symbol,
+                    COALESCE(c.symbol, n.symbol) as symbol,
                     COALESCE(n.stock_name, c.symbol) as stock_name,
-                    c.total,
-                    c.strong_buy,
-                    c.buy,
-                    c.hold,
-                    c.sell,
-                    c.strong_sell,
-                    c.consensus_rating,
+                    COALESCE(NULLIF(n.market_cap, ''), '') as market_cap,
+                    COALESCE(NULLIF(n.price, ''), '') as price,
+                    COALESCE(c.total, 0) as total,
+                    COALESCE(c.strong_buy, 0) as strong_buy,
+                    COALESCE(c.buy, 0) as buy,
+                    COALESCE(c.hold, 0) as hold,
+                    COALESCE(c.sell, 0) as sell,
+                    COALESCE(c.strong_sell, 0) as strong_sell,
+                    COALESCE(c.consensus_rating, 'N/A') as consensus_rating,
                     c.target_mean_price,
                     c.target_high_price,
                     c.target_low_price,
                     c.scraped_at
-                FROM consensus_recommendations c
-                LEFT JOIN nifty_750 n ON UPPER(c.symbol) = UPPER(n.symbol)
-                WHERE UPPER(c.symbol) = UPPER(%s);
+                FROM nifty_750 n
+                LEFT JOIN consensus_recommendations c ON UPPER(n.symbol) = UPPER(c.symbol)
+                WHERE UPPER(n.symbol) = UPPER(%s);
             """, (symbol,))
             row = cur.fetchone()
+            if not row or not row.get('symbol'):
+                cur.execute("""
+                    SELECT 
+                        c.id,
+                        c.symbol,
+                        COALESCE(n.stock_name, c.symbol) as stock_name,
+                        COALESCE(NULLIF(n.market_cap, ''), '') as market_cap,
+                        COALESCE(NULLIF(n.price, ''), '') as price,
+                        c.total,
+                        c.strong_buy,
+                        c.buy,
+                        c.hold,
+                        c.sell,
+                        c.strong_sell,
+                        c.consensus_rating,
+                        c.target_mean_price,
+                        c.target_high_price,
+                        c.target_low_price,
+                        c.scraped_at
+                    FROM consensus_recommendations c
+                    LEFT JOIN nifty_750 n ON UPPER(c.symbol) = UPPER(n.symbol)
+                    WHERE UPPER(c.symbol) = UPPER(%s);
+                """, (symbol,))
+                row = cur.fetchone()
         conn.close()
 
-        if row and row.get('scraped_at'):
-            row['scraped_at'] = row['scraped_at'].strftime("%d %b %Y, %I:%M %p")
+        if row:
+            row['market_cap'] = format_mcap(row.get('market_cap'))
+            row['marketCap'] = row['market_cap']
+            row['price'] = format_price(row.get('price'))
+            if row.get('scraped_at'):
+                row['scraped_at'] = row['scraped_at'].strftime("%d %b %Y, %I:%M %p")
 
-        return jsonify(row or {})
+        return jsonify(row or {"symbol": symbol.upper(), "stock_name": symbol.upper(), "total": 0, "consensus_rating": "N/A"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/sentiment', methods=['GET'])
+def get_boarders_sentiment():
+    """Return Moneycontrol boarders & sentiment data joined with stock_name, market_cap, and price from nifty_750."""
+    try:
+        conn = get_db_conn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT 
+                    m.id,
+                    m.symbol,
+                    COALESCE(n.stock_name, m.stock_name, m.symbol) as stock_name,
+                    COALESCE(NULLIF(n.market_cap, ''), '') as market_cap,
+                    COALESCE(NULLIF(n.price, ''), '') as price,
+                    m.sc_id,
+                    m.topic_id,
+                    m.msg_count,
+                    m.follower_count,
+                    m.buy_perc,
+                    m.sell_perc,
+                    m.hold_perc,
+                    m.ai_summary,
+                    m.scraped_at
+                FROM moneycontrol_boarders m
+                LEFT JOIN nifty_750 n ON UPPER(m.symbol) = UPPER(n.symbol)
+                ORDER BY COALESCE(n.stock_name, m.stock_name, m.symbol) ASC;
+            """)
+            rows = cur.fetchall()
+        conn.close()
+
+        for r in rows:
+            r['market_cap'] = format_mcap(r.get('market_cap'))
+            r['marketCap'] = r['market_cap']
+            r['price'] = format_price(r.get('price'))
+            if r.get('scraped_at'):
+                r['scraped_at'] = r['scraped_at'].strftime("%d %b %Y, %I:%M %p")
+
+        return jsonify({"sentiment": rows, "count": len(rows)})
+    except Exception as e:
+        return jsonify({"error": str(e), "sentiment": []}), 500
+
+
+@app.route('/api/sentiment/<symbol>', methods=['GET'])
+def get_symbol_boarders_sentiment(symbol):
+    """Return Moneycontrol boarders & sentiment data for a specific stock symbol."""
+    try:
+        conn = get_db_conn()
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT 
+                    m.id,
+                    COALESCE(m.symbol, n.symbol) as symbol,
+                    COALESCE(n.stock_name, m.stock_name, m.symbol) as stock_name,
+                    COALESCE(NULLIF(n.market_cap, ''), '') as market_cap,
+                    COALESCE(NULLIF(n.price, ''), '') as price,
+                    m.sc_id,
+                    m.topic_id,
+                    COALESCE(m.msg_count, 0) as msg_count,
+                    COALESCE(m.follower_count, 0) as follower_count,
+                    COALESCE(m.buy_perc, 0) as buy_perc,
+                    COALESCE(m.sell_perc, 0) as sell_perc,
+                    COALESCE(m.hold_perc, 0) as hold_perc,
+                    m.ai_summary,
+                    m.scraped_at
+                FROM nifty_750 n
+                LEFT JOIN moneycontrol_boarders m ON UPPER(n.symbol) = UPPER(m.symbol)
+                WHERE UPPER(n.symbol) = UPPER(%s);
+            """, (symbol,))
+            row = cur.fetchone()
+            if not row or not row.get('symbol'):
+                cur.execute("""
+                    SELECT 
+                        m.id,
+                        m.symbol,
+                        COALESCE(n.stock_name, m.stock_name, m.symbol) as stock_name,
+                        COALESCE(NULLIF(n.market_cap, ''), '') as market_cap,
+                        COALESCE(NULLIF(n.price, ''), '') as price,
+                        m.sc_id,
+                        m.topic_id,
+                        m.msg_count,
+                        m.follower_count,
+                        m.buy_perc,
+                        m.sell_perc,
+                        m.hold_perc,
+                        m.ai_summary,
+                        m.scraped_at
+                    FROM moneycontrol_boarders m
+                    LEFT JOIN nifty_750 n ON UPPER(m.symbol) = UPPER(n.symbol)
+                    WHERE UPPER(m.symbol) = UPPER(%s);
+                """, (symbol,))
+                row = cur.fetchone()
+        conn.close()
+
+        if row:
+            row['market_cap'] = format_mcap(row.get('market_cap'))
+            row['marketCap'] = row['market_cap']
+            row['price'] = format_price(row.get('price'))
+            if row.get('scraped_at'):
+                row['scraped_at'] = row['scraped_at'].strftime("%d %b %Y, %I:%M %p")
+
+        return jsonify(row or {"symbol": symbol.upper(), "stock_name": symbol.upper(), "msg_count": 0, "buy_perc": 0})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1654,8 +1797,8 @@ def get_financial_metrics():
                     f.id,
                     f.symbol,
                     COALESCE(n.stock_name, f.symbol) as stock_name,
-                    COALESCE(s.market_cap, '') as market_cap,
-                    MAX(t.price) FILTER (WHERE t.price IS NOT NULL AND t.price != '') as price,
+                    COALESCE(NULLIF(n.market_cap, ''), s.market_cap, '') as market_cap,
+                    COALESCE(NULLIF(n.price, ''), MAX(t.price), '') as price,
                     f.q_last_period,
                     f.q_prev_period,
                     f.q_last_period_prev_month,
@@ -1682,14 +1825,14 @@ def get_financial_metrics():
                     f.roce_1,
                     f.roce_2
                 FROM financial_metrics f
-                LEFT JOIN nifty_750 n ON f.symbol = n.symbol
-                LEFT JOIN trades t ON f.symbol = t.symbol
+                LEFT JOIN nifty_750 n ON UPPER(f.symbol) = UPPER(n.symbol)
+                LEFT JOIN trades t ON UPPER(f.symbol) = UPPER(t.symbol)
                 LEFT JOIN (
-                    SELECT DISTINCT ON (symbol) symbol, market_cap
+                    SELECT DISTINCT ON (UPPER(symbol)) UPPER(symbol) as symbol, market_cap
                     FROM shareholding_pattern
-                    ORDER BY symbol, id DESC
-                ) s ON f.symbol = s.symbol
-                GROUP BY f.id, f.symbol, n.stock_name, s.market_cap,
+                    ORDER BY UPPER(symbol), id DESC
+                ) s ON UPPER(f.symbol) = s.symbol
+                GROUP BY f.id, f.symbol, n.stock_name, n.market_cap, n.price, s.market_cap,
                          f.q_last_period, f.q_prev_period, f.q_last_period_prev_month,
                          f.q_sales_last_period, f.q_sales_prev_period, f.q_sales_last_period_prev_month,
                          f.q_sales_growth_1, f.q_sales_growth_2, f.q_sales_yoy_growth,
@@ -1707,12 +1850,8 @@ def get_financial_metrics():
         for r in rows:
             symbol = r['symbol']
             stock_name = r['stock_name'] or symbol
-            mcap = r['market_cap'] or '—'
-            if mcap != '—' and not str(mcap).startswith('₹') and not str(mcap).endswith('Cr'):
-                mcap = f"₹{mcap} Cr"
-            price = r['price'] or '—'
-            if price != '—' and not str(price).startswith('₹'):
-                price = f"₹{price}"
+            mcap = format_mcap(r.get('market_cap'))
+            price = format_price(r.get('price'))
 
             q1_str = r['q_sales_growth_1']
             q2_str = r['q_sales_growth_2']
@@ -1859,8 +1998,8 @@ def get_stock_metrics_details(symbol):
                     f.id,
                     f.symbol,
                     COALESCE(n.stock_name, f.symbol) as stock_name,
-                    COALESCE(s.market_cap, '') as market_cap,
-                    MAX(t.price) FILTER (WHERE t.price IS NOT NULL AND t.price != '') as price,
+                    COALESCE(NULLIF(n.market_cap, ''), s.market_cap, '') as market_cap,
+                    COALESCE(NULLIF(n.price, ''), MAX(t.price), '') as price,
                     f.q_last_period,
                     f.q_prev_period,
                     f.q_last_period_prev_month,
@@ -1890,12 +2029,12 @@ def get_stock_metrics_details(symbol):
                 LEFT JOIN nifty_750 n ON UPPER(f.symbol) = UPPER(n.symbol)
                 LEFT JOIN trades t ON UPPER(f.symbol) = UPPER(t.symbol)
                 LEFT JOIN (
-                    SELECT DISTINCT ON (symbol) symbol, market_cap
+                    SELECT DISTINCT ON (UPPER(symbol)) UPPER(symbol) as symbol, market_cap
                     FROM shareholding_pattern
-                    ORDER BY symbol, id DESC
-                ) s ON UPPER(f.symbol) = UPPER(s.symbol)
+                    ORDER BY UPPER(symbol), id DESC
+                ) s ON UPPER(f.symbol) = s.symbol
                 WHERE UPPER(f.symbol) = %s
-                GROUP BY f.id, f.symbol, n.stock_name, s.market_cap,
+                GROUP BY f.id, f.symbol, n.stock_name, n.market_cap, n.price, s.market_cap,
                          f.q_last_period, f.q_prev_period, f.q_last_period_prev_month,
                          f.q_sales_last_period, f.q_sales_prev_period, f.q_sales_last_period_prev_month,
                          f.q_sales_growth_1, f.q_sales_growth_2, f.q_sales_yoy_growth,
@@ -1915,12 +2054,8 @@ def get_stock_metrics_details(symbol):
 
         if fm_row:
             stock_name = fm_row['stock_name'] or symbol_upper
-            mcap = fm_row['market_cap'] or '—'
-            if mcap != '—' and not str(mcap).startswith('₹') and not str(mcap).endswith('Cr'):
-                mcap = f"₹{mcap} Cr"
-            price = fm_row['price'] or '—'
-            if price != '—' and not str(price).startswith('₹'):
-                price = f"₹{price}"
+            mcap = format_mcap(fm_row.get('market_cap'))
+            price = format_price(fm_row.get('price'))
 
             def _pf(val):
                 if not val or str(val).strip() in ('', '—'):

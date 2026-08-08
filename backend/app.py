@@ -2182,12 +2182,13 @@ def get_watchlist_api():
             cur.execute("SELECT id, name FROM watchlist_groups ORDER BY id ASC;")
             group_rows = cur.fetchall()
 
-            # Query watchlist items joined with latest stock_history for Exit (50 DMA) & Strong Exit (100 DMA) % fall signals
+            # Query watchlist items joined with latest stock_history for Lite Exit (20 DMA), Exit (50 DMA) & Strong Exit (100 DMA) % fall signals
             cur.execute("""
                 WITH latest_dma AS (
                     SELECT DISTINCT ON (symbol)
                         symbol,
                         close,
+                        ROUND(AVG(close) OVER (PARTITION BY symbol ORDER BY trade_date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)::numeric, 2) as dma20,
                         ROUND(AVG(close) OVER (PARTITION BY symbol ORDER BY trade_date ROWS BETWEEN 49 PRECEDING AND CURRENT ROW)::numeric, 2) as dma50,
                         ROUND(AVG(close) OVER (PARTITION BY symbol ORDER BY trade_date ROWS BETWEEN 99 PRECEDING AND CURRENT ROW)::numeric, 2) as dma100
                     FROM stock_history
@@ -2202,6 +2203,11 @@ def get_watchlist_api():
                     w.market_cap as "marketCap", 
                     w.change,
                     CASE WHEN w.change LIKE '+%' THEN true ELSE false END as "isPos",
+                    CASE 
+                        WHEN d.close IS NOT NULL AND d.dma20 IS NOT NULL AND d.close < d.dma20 THEN
+                            'Yes - ' || ROUND(((d.dma20 - d.close) / d.dma20) * 100, 2)::text || '%'
+                        ELSE 'No'
+                    END as "liteExit",
                     CASE 
                         WHEN d.close IS NOT NULL AND d.dma50 IS NOT NULL AND d.close < d.dma50 THEN
                             'Yes - ' || ROUND(((d.dma50 - d.close) / d.dma50) * 100, 2)::text || '%'

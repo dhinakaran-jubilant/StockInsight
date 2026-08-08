@@ -24,6 +24,27 @@ export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '',
 	const [isNotificationCardOpen, setIsNotificationCardOpen] = useState(false);
 	const [isUserProfileCardOpen, setIsUserProfileCardOpen] = useState(false);
 	const [isNotificationBannerOpen, setIsNotificationBannerOpen] = useState(true);
+	const [watchlistSortRule, setWatchlistSortRule] = useState({ key: null, direction: 'desc' });
+
+	const parseExitPct = (str) => {
+		if (!str || typeof str !== 'string' || !str.startsWith('Yes')) return -999999;
+		const match = str.match(/[\d.]+/);
+		if (match) {
+			const num = parseFloat(match[0]);
+			return isNaN(num) ? -999999 : num;
+		}
+		return -999999;
+	};
+
+	const handleWatchlistSort = (key) => {
+		setWatchlistSortRule((prev) => {
+			if (prev.key === key) {
+				if (prev.direction === 'desc') return { key, direction: 'asc' };
+				if (prev.direction === 'asc') return { key: null, direction: 'desc' };
+			}
+			return { key, direction: 'desc' };
+		});
+	};
 
 	const handleRenameGroupSubmit = (oldName) => {
 		if (!editingGroupNameInput.trim() || editingGroupNameInput.trim() === oldName) {
@@ -116,6 +137,9 @@ export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '',
 				const existing = map.get(tickerKey);
 				if (!existing.groupNames.includes(gName)) {
 					existing.groupNames.push(gName);
+				}
+				if (item.liteExit && item.liteExit.startsWith('Yes') && (!existing.liteExit || !existing.liteExit.startsWith('Yes'))) {
+					existing.liteExit = item.liteExit;
 				}
 				if (item.exit && item.exit.startsWith('Yes') && (!existing.exit || !existing.exit.startsWith('Yes'))) {
 					existing.exit = item.exit;
@@ -342,7 +366,7 @@ export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '',
 	};
 
 	const filteredWatchlist = useMemo(() => {
-		return groupedWatchlistItems.filter((item) => {
+		const filtered = groupedWatchlistItems.filter((item) => {
 			const matchesSearch =
 				!watchlistSearch ||
 				(item.ticker && item.ticker.toLowerCase().includes(watchlistSearch.toLowerCase())) ||
@@ -357,12 +381,40 @@ export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '',
 
 			return matchesSearch && matchesGroup;
 		});
-	}, [groupedWatchlistItems, watchlistSearch, selectedGroupFilters]);
 
+		if (!watchlistSortRule.key) return filtered;
+
+		const { key, direction } = watchlistSortRule;
+		return [...filtered].sort((a, b) => {
+			let aVal, bVal;
+			if (['liteExit', 'exit', 'strongExit'].includes(key)) {
+				aVal = parseExitPct(a[key]);
+				bVal = parseExitPct(b[key]);
+			} else if (key === 'price') {
+				aVal = parseFloat(String(a.price || 0).replace(/[^0-9.]/g, '')) || 0;
+				bVal = parseFloat(String(b.price || 0).replace(/[^0-9.]/g, '')) || 0;
+			} else if (key === 'stockName') {
+				aVal = (a.stockName || a.ticker || '').toLowerCase();
+				bVal = (b.stockName || b.ticker || '').toLowerCase();
+				const comp = aVal.localeCompare(bVal);
+				return direction === 'asc' ? comp : -comp;
+			} else {
+				return 0;
+			}
+
+			if (aVal === bVal) return 0;
+			if (aVal === -999999) return 1;
+			if (bVal === -999999) return -1;
+
+			return direction === 'desc' ? bVal - aVal : aVal - bVal;
+		});
+	}, [groupedWatchlistItems, watchlistSearch, selectedGroupFilters, watchlistSortRule]);
+
+	const liteExitStocks = groupedWatchlistItems.filter((i) => i.liteExit && i.liteExit.startsWith('Yes'));
 	const exitStocks = groupedWatchlistItems.filter((i) => i.exit && i.exit.startsWith('Yes'));
 	const strongExitStocks = groupedWatchlistItems.filter((i) => i.strongExit && i.strongExit.startsWith('Yes'));
 	const alertStockItems = groupedWatchlistItems.filter(
-		(i) => (i.exit && i.exit.startsWith('Yes')) || (i.strongExit && i.strongExit.startsWith('Yes'))
+		(i) => (i.liteExit && i.liteExit.startsWith('Yes')) || (i.exit && i.exit.startsWith('Yes')) || (i.strongExit && i.strongExit.startsWith('Yes'))
 	);
 	const totalAlertCount = alertStockItems.length;
 
@@ -499,7 +551,7 @@ export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '',
 										</div>
 										<div>
 											<h4 className="text-sm font-bold text-slate-800">Watchlist Exit Alerts</h4>
-											<p className="text-[11px] text-slate-400 font-medium">Stocks below 50 DMA &amp; 100 DMA</p>
+											<p className="text-[11px] text-slate-400 font-medium">Stocks below 20 DMA, 50 DMA &amp; 100 DMA</p>
 										</div>
 									</div>
 									<span className="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-rose-100 text-rose-700">
@@ -508,14 +560,18 @@ export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '',
 								</div>
 
 								{/* Summary Counts Row */}
-								<div className="grid grid-cols-2 gap-3 text-center">
-									<div className="bg-amber-50/80 border border-amber-100 p-2.5 rounded-xl">
-										<span className="text-[11px] font-bold text-amber-800 uppercase block">Exit (50 DMA)</span>
-										<span className="text-base font-extrabold text-amber-900">{exitStocks.length} Stocks</span>
+								<div className="grid grid-cols-3 gap-2 text-center">
+									<div className="bg-sky-50/80 border border-sky-100 p-2 rounded-xl">
+										<span className="text-[10px] font-bold text-sky-800 uppercase block">Lite (20 DMA)</span>
+										<span className="text-sm font-extrabold text-sky-900">{liteExitStocks.length} Stocks</span>
 									</div>
-									<div className="bg-rose-50/80 border border-rose-100 p-2.5 rounded-xl">
-										<span className="text-[11px] font-bold text-rose-800 uppercase block">Strong Exit (100 DMA)</span>
-										<span className="text-base font-extrabold text-rose-900">{strongExitStocks.length} Stocks</span>
+									<div className="bg-amber-50/80 border border-amber-100 p-2 rounded-xl">
+										<span className="text-[10px] font-bold text-amber-800 uppercase block">Exit (50 DMA)</span>
+										<span className="text-sm font-extrabold text-amber-900">{exitStocks.length} Stocks</span>
+									</div>
+									<div className="bg-rose-50/80 border border-rose-100 p-2 rounded-xl">
+										<span className="text-[10px] font-bold text-rose-800 uppercase block">Strong (100 DMA)</span>
+										<span className="text-sm font-extrabold text-rose-900">{strongExitStocks.length} Stocks</span>
 									</div>
 								</div>
 
@@ -541,7 +597,12 @@ export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '',
 													</div>
 												</div>
 
-												<div className="flex items-center gap-1 text-right">
+												<div className="flex items-center gap-1 text-right flex-wrap justify-end">
+													{item.liteExit && item.liteExit.startsWith('Yes') && (
+														<span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 text-sky-800 border border-sky-200">
+															Lite {item.liteExit.includes('-') ? item.liteExit.split('-')[1].trim() : ''}
+														</span>
+													)}
 													{item.exit && item.exit.startsWith('Yes') && (
 														<span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-200">
 															Exit {item.exit.includes('-') ? item.exit.split('-')[1].trim() : ''}
@@ -885,21 +946,52 @@ export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '',
 
 							{/* Watchlist Assets Table */}
 							<div className="overflow-x-auto border border-slate-100 rounded-xl shadow-2xs">
-								<table className="w-full text-left border-collapse min-w-max">
-									<thead>
-										<tr className="bg-[#F1F5F9] text-slate-700 text-xs font-semibold">
-											<th className="py-3 px-4">Asset Name</th>
-											<th className="py-3 px-4">Group</th>
-											<th className="py-3 px-4">Price</th>
-											<th className="py-3 px-4 text-center">Exit</th>
-											<th className="py-3 px-4 text-center">Strong Exit</th>
-											<th className="py-3 px-4 text-center">Actions</th>
-										</tr>
-									</thead>
+								{(() => {
+									const renderSortHeader = (key, label, alignCenter = false) => {
+										const isActive = watchlistSortRule.key === key;
+										const direction = watchlistSortRule.direction;
+										const alignClass = alignCenter ? 'justify-center text-center' : 'justify-start text-left';
+										const thAlign = alignCenter ? 'text-center' : 'text-left';
+
+										return (
+											<th
+												onClick={() => handleWatchlistSort(key)}
+												className={`py-3 px-4 text-xs font-semibold cursor-pointer select-none group hover:bg-slate-200/70 transition-colors ${thAlign}`}
+												title="Click to sort by % values"
+											>
+												<div className={`flex items-center gap-1 whitespace-nowrap ${alignClass}`}>
+													<span>{label}</span>
+													{!isActive ? (
+														<span className="material-symbols-outlined text-[15px] leading-none text-slate-400 opacity-40 group-hover:opacity-100 select-none">
+															unfold_more
+														</span>
+													) : (
+														<span className="material-symbols-outlined text-[15px] leading-none font-bold text-[#9462d2] select-none ml-0.5">
+															{direction === 'desc' ? 'arrow_downward' : 'arrow_upward'}
+														</span>
+													)}
+												</div>
+											</th>
+										);
+									};
+
+									return (
+										<table className="w-full text-left border-collapse min-w-max">
+											<thead>
+												<tr className="bg-[#F1F5F9] text-slate-700 text-xs font-semibold">
+													{renderSortHeader('stockName', 'Asset Name')}
+													<th className="py-3 px-4 font-semibold">Group</th>
+													{renderSortHeader('price', 'Price')}
+													{renderSortHeader('liteExit', 'Lite Exit (20)', true)}
+													{renderSortHeader('exit', 'Exit (50)', true)}
+													{renderSortHeader('strongExit', 'Strong Exit (100)', true)}
+													<th className="py-3 px-4 text-center font-semibold">Actions</th>
+												</tr>
+											</thead>
 									<tbody className="divide-y divide-slate-100 text-sm">
 										{loading ? (
 											<tr>
-												<td colSpan="6" className="py-12 text-center text-slate-400 text-xs font-medium">
+												<td colSpan="7" className="py-12 text-center text-slate-400 text-xs font-medium">
 													Loading watchlist from database...
 												</td>
 											</tr>
@@ -954,7 +1046,25 @@ export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '',
 														{item.price || '—'}
 													</td>
 
-													{/* Exit */}
+													{/* Lite Exit (20 DMA) */}
+													<td className="py-3 px-4 text-center whitespace-nowrap">
+														{item.liteExit && item.liteExit.startsWith('Yes') ? (
+															<div className="inline-flex items-center justify-center gap-1.5">
+																<span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-sky-100/90 text-sky-800 border border-sky-200/80">
+																	Yes
+																</span>
+																<span className="text-xs font-semibold text-slate-600">
+																	{item.liteExit.includes('-') ? item.liteExit.split('-')[1].trim() : ''}
+																</span>
+															</div>
+														) : (
+															<span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-500">
+																No
+															</span>
+														)}
+													</td>
+
+													{/* Exit (50 DMA) */}
 													<td className="py-3 px-4 text-center whitespace-nowrap">
 														{item.exit && item.exit.startsWith('Yes') ? (
 															<div className="inline-flex items-center justify-center gap-1.5">
@@ -972,7 +1082,7 @@ export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '',
 														)}
 													</td>
 
-													{/* Strong Exit */}
+													{/* Strong Exit (100 DMA) */}
 													<td className="py-3 px-4 text-center whitespace-nowrap">
 														{item.strongExit && item.strongExit.startsWith('Yes') ? (
 															<div className="inline-flex items-center justify-center gap-1.5">
@@ -1004,13 +1114,15 @@ export default function Navbar({ loggedInUser, setLoggedInUser, searchTerm = '',
 											))
 										) : (
 											<tr>
-												<td colSpan="6" className="py-12 text-center text-slate-400 text-xs font-medium">
+												<td colSpan="7" className="py-12 text-center text-slate-400 text-xs font-medium">
 													{watchlistSearch ? `No watchlist assets matching "${watchlistSearch}"` : 'No stocks saved in database watchlist yet.'}
 												</td>
 											</tr>
 										)}
 									</tbody>
 								</table>
+									);
+								})()}
 							</div>
 						</div>
 

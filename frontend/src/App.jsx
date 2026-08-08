@@ -8,6 +8,7 @@ import Watchlist from './components/Watchlist';
 import Analysis from './components/Analysis';
 import Users from './components/Users';
 import Login from './components/Login';
+import AiChatBot from './components/AiChatBot';
 
 const getRouteFromPath = (path) => {
   const cleanPath = (path || '').toLowerCase().replace(/\/$/, '');
@@ -266,6 +267,9 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {/* Floating AI Chat Bot (positioned 5px from bottom and right) */}
+      <AiChatBot />
     </div>
   );
 }

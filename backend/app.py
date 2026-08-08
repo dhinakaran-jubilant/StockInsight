@@ -1,8 +1,12 @@
 import os
+import re
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+
+import crossovers
+from ai_agent import run_agent, agent_enabled, agent_status, AgentUnavailable
 
 app = Flask(__name__)
 CORS(app)
@@ -20,29 +24,8 @@ def get_db_conn():
     """Connect to PostgreSQL database."""
     return psycopg2.connect(**DB_CONFIG)
 
-def format_mcap(mcap_raw):
-    if not mcap_raw or mcap_raw == '—':
-        return '—'
-    s = str(mcap_raw).replace('₹', '').replace('Cr', '').replace(',', '').strip()
-    try:
-        val = float(s)
-        if val >= 100000:
-            lacs = val / 100000.0
-            return f"₹{lacs:.2f}L Cr"
-        else:
-            return f"₹{val:,.2f} Cr"
-    except Exception:
-        return f"₹{mcap_raw} Cr" if not str(mcap_raw).startswith('₹') else str(mcap_raw)
-
-def format_price(price_raw):
-    if not price_raw or price_raw == '—':
-        return '—'
-    s = str(price_raw).replace('₹', '').replace('$', '').replace(',', '').strip()
-    try:
-        val = float(s)
-        return f"₹{val:,.2f}"
-    except Exception:
-        return f"₹{price_raw}" if not str(price_raw).startswith('₹') and not str(price_raw).startswith('$') else str(price_raw)
+# Defined in formatting.py so the chat agent's tools format figures identically.
+from formatting import format_mcap, format_price  # noqa: E402  (re-exported for this module)
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -59,7 +42,8 @@ def health_check():
     
     return jsonify({
         "status": "ok",
-        "database": db_status
+        "database": db_status,
+        "aiAgent": agent_status()
     })
 
 @app.route('/api/last-updated', methods=['GET'])
@@ -665,200 +649,39 @@ def get_ownership_details(symbol):
 
 @app.route('/api/trends', methods=['GET'])
 def get_trends():
-    """Return trend crossover analysis (count of crossovers, price % increase, and probability %) per stock."""
+    """Return trend crossover analysis (count of crossovers, price % increase, and probability %) per stock.
+
+    The calculation lives in crossovers.py so that this table and the Tara AI chat agent
+    always report identical figures.
+    """
     try:
         conn = get_db_conn()
-        with conn.cursor() as cur:
-            # Query stock basic details
-            cur.execute("""
-                WITH symbols_list AS (
-                    SELECT DISTINCT UPPER(symbol) as symbol FROM stock_history
-                )
-                SELECT 
-                    s.symbol,
-                    COALESCE(n.stock_name, s.symbol) as stock_name,
-                    COALESCE(NULLIF(n.market_cap, ''), sh.market_cap, '') as market_cap,
-                    COALESCE(NULLIF(n.price, ''), t.price, '') as price
-                FROM symbols_list s
-                LEFT JOIN nifty_750 n ON s.symbol = UPPER(n.symbol)
-                LEFT JOIN (
-                    SELECT DISTINCT ON (UPPER(symbol)) UPPER(symbol) as symbol, market_cap
-                    FROM shareholding_pattern
-                    ORDER BY UPPER(symbol), id DESC
-                ) sh ON s.symbol = sh.symbol
-                LEFT JOIN (
-                    SELECT DISTINCT ON (UPPER(symbol)) UPPER(symbol) as symbol, price
-                    FROM trades
-                    WHERE price IS NOT NULL AND price != ''
-                    ORDER BY UPPER(symbol), id DESC
-                ) t ON s.symbol = t.symbol
-                ORDER BY COALESCE(n.stock_name, s.symbol) ASC;
-            """)
-            stock_rows = cur.fetchall()
-
-            # Query historical DMA states for all symbols
-            cur.execute("""
-                SELECT 
-                    symbol, trade_date, close,
-                    AVG(close) OVER (PARTITION BY symbol ORDER BY trade_date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) as dma20,
-                    AVG(close) OVER (PARTITION BY symbol ORDER BY trade_date ROWS BETWEEN 49 PRECEDING AND CURRENT ROW) as dma50,
-                    AVG(close) OVER (PARTITION BY symbol ORDER BY trade_date ROWS BETWEEN 99 PRECEDING AND CURRENT ROW) as dma100,
-                    AVG(close) OVER (PARTITION BY symbol ORDER BY trade_date ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) as dma200
-                FROM stock_history
-                ORDER BY symbol, trade_date ASC;
-            """)
-            history_rows = cur.fetchall()
-        conn.close()
-
-        from collections import defaultdict
-        sym_history = defaultdict(list)
-        for sym, t_date, close, dma20, dma50, dma100, dma200 in history_rows:
-            sym_history[sym].append({
-                'date': t_date,
-                'close': float(close) if close is not None else 0.0,
-                'dma20': float(dma20) if dma20 is not None else None,
-                'dma50': float(dma50) if dma50 is not None else None,
-                'dma100': float(dma100) if dma100 is not None else None,
-                'dma200': float(dma200) if dma200 is not None else None
-            })
-
-        def calc_crossover_stats(rows, dma_key, req_dma20=False, req_dma50=False):
-            if not rows:
-                return {
-                    "text": "No",
-                    "crossoverCount": 0,
-                    "prob": 0.0,
-                    "avgGainPct": 0.0,
-                    "isActive": False,
-                    "activeDays": 0
-                }
-
-            events = []
-            current_event = None
-
-            for idx, r in enumerate(rows):
-                fast_dma = r.get(dma_key)
-                slow_dma = r.get('dma200')
-                dma20 = r.get('dma20')
-                dma50 = r.get('dma50')
-                close = r.get('close', 0.0)
-
-                if fast_dma is None or slow_dma is None:
-                    continue
-
-                dma20_ok = (not req_dma20) or (dma20 is not None and dma20 > slow_dma)
-                dma50_ok = (not req_dma50) or (dma50 is not None and dma50 > slow_dma)
-
-                is_cross = (fast_dma > slow_dma) and dma20_ok and dma50_ok
-
-                prev_fast = rows[idx-1].get(dma_key) if idx > 0 else None
-                prev_slow = rows[idx-1].get('dma200') if idx > 0 else None
-                prev_dma20 = rows[idx-1].get('dma20') if idx > 0 else None
-                prev_dma50 = rows[idx-1].get('dma50') if idx > 0 else None
-
-                prev_dma20_ok = (not req_dma20) or (prev_dma20 is not None and prev_slow is not None and prev_dma20 > prev_slow)
-                prev_dma50_ok = (not req_dma50) or (prev_dma50 is not None and prev_slow is not None and prev_dma50 > prev_slow)
-
-                prev_cross = (prev_fast is not None and prev_slow is not None and prev_fast > prev_slow) and prev_dma20_ok and prev_dma50_ok
-
-                if is_cross and not prev_cross:
-                    if current_event:
-                        events.append(current_event)
-                    current_event = {
-                        'start_date': r['date'],
-                        'start_price': close,
-                        'max_price': close,
-                        'days': 1
-                    }
-                elif is_cross and current_event:
-                    current_event['max_price'] = max(current_event['max_price'], close)
-                    current_event['days'] += 1
-                elif not is_cross and current_event:
-                    events.append(current_event)
-                    current_event = None
-
-            if current_event:
-                events.append(current_event)
-
-            latest_fast = rows[-1].get(dma_key)
-            latest_slow = rows[-1].get('dma200')
-            latest_dma20 = rows[-1].get('dma20')
-            latest_dma50 = rows[-1].get('dma50')
-
-            d20_act = (not req_dma20) or (latest_dma20 is not None and latest_slow is not None and latest_dma20 > latest_slow)
-            d50_act = (not req_dma50) or (latest_dma50 is not None and latest_slow is not None and latest_dma50 > latest_slow)
-
-            is_active = (latest_fast is not None and latest_slow is not None and latest_fast > latest_slow) and d20_act and d50_act
-
-            active_days = events[-1]['days'] if (events and is_active) else 0
-
-            status_text = f"Yes {active_days} days" if is_active else "No"
-            if is_active and active_days == 1:
-                status_text = "Yes 1 day"
-
-            if not events:
-                return {
-                    "text": "No",
-                    "crossoverCount": 0,
-                    "prob": 0.0,
-                    "avgGainPct": 0.0,
-                    "isActive": is_active,
-                    "activeDays": active_days
-                }
-
-            successes = 0
-            total_gain = 0.0
-            for ev in events:
-                if ev['start_price'] > 0:
-                    pct = ((ev['max_price'] - ev['start_price']) / ev['start_price']) * 100.0
-                else:
-                    pct = 0.0
-                if pct > 0:
-                    successes += 1
-                total_gain += pct
-
-            count = len(events)
-            prob = round((successes / count) * 100.0, 1)
-            avg_gain = round(total_gain / count, 1)
-
-            return {
-                "text": status_text,
-                "crossoverCount": count,
-                "prob": prob,
-                "avgGainPct": avg_gain,
-                "isActive": is_active,
-                "activeDays": active_days
-            }
+        try:
+            rows = crossovers.compute_all(conn)
+        finally:
+            conn.close()
 
         trends_list = []
-        for idx, r in enumerate(stock_rows):
-            symbol = r[0]
-            stock_name = r[1] or symbol
-            mcap = r[2] or '—'
+        for r in rows:
+            mcap = r['marketCapRaw'] or '—'
             if mcap != '—' and not str(mcap).startswith('₹') and not str(mcap).endswith('Cr'):
                 mcap = f"₹{mcap} Cr"
-            price = r[3] or '—'
+            price = r['priceRaw'] or '—'
             if price != '—' and not str(price).startswith('₹'):
                 price = f"₹{price}"
 
-            rows = sym_history.get(symbol, [])
-
-            lite_stats = calc_crossover_stats(rows, 'dma20')
-            core_stats = calc_crossover_stats(rows, 'dma50', req_dma20=True)
-            pro_stats = calc_crossover_stats(rows, 'dma100', req_dma20=True, req_dma50=True)
-
             trends_list.append({
-                "id": idx + 1,
-                "ticker": symbol,
-                "stockName": stock_name,
+                "id": r['id'],
+                "ticker": r['ticker'],
+                "stockName": r['stockName'],
                 "marketCap": mcap,
                 "price": price,
-                "dma20_200": lite_stats['text'],
-                "dma50_200": core_stats['text'],
-                "dma100_200": pro_stats['text'],
-                "liteStats": lite_stats,
-                "coreStats": core_stats,
-                "proStats": pro_stats
+                "dma20_200": r['lite']['text'],
+                "dma50_200": r['golden']['text'],
+                "dma100_200": r['pro']['text'],
+                "liteStats": r['lite'],
+                "coreStats": r['golden'],
+                "proStats": r['pro']
             })
 
         return jsonify({"trends": trends_list, "count": len(trends_list)})
@@ -1090,78 +913,40 @@ def calc_breakout_stats(history):
 
 @app.route('/api/breakout', methods=['GET'])
 def get_breakouts():
-    """Return 2-year High/Low breakout analysis for all stocks."""
+    """Return 2-year High/Low breakout analysis for all stocks.
+
+    Shares crossovers.compute_all() with /api/trends and the chat agent, so all three
+    read the same cached price scan and can never disagree.
+    """
     try:
         conn = get_db_conn()
-        with conn.cursor() as cur:
-            # Query stock basic details
-            cur.execute("""
-                WITH symbols_list AS (
-                    SELECT DISTINCT UPPER(symbol) as symbol FROM stock_history
-                )
-                SELECT 
-                    s.symbol,
-                    COALESCE(n.stock_name, s.symbol) as stock_name,
-                    COALESCE(NULLIF(n.market_cap, ''), sh.market_cap, '') as market_cap,
-                    COALESCE(NULLIF(n.price, ''), t.price, '') as price
-                FROM symbols_list s
-                LEFT JOIN nifty_750 n ON s.symbol = UPPER(n.symbol)
-                LEFT JOIN (
-                    SELECT DISTINCT ON (UPPER(symbol)) UPPER(symbol) as symbol, market_cap
-                    FROM shareholding_pattern
-                    ORDER BY UPPER(symbol), id DESC
-                ) sh ON s.symbol = sh.symbol
-                LEFT JOIN (
-                    SELECT DISTINCT ON (UPPER(symbol)) UPPER(symbol) as symbol, price
-                    FROM trades
-                    WHERE price IS NOT NULL AND price != ''
-                    ORDER BY UPPER(symbol), id DESC
-                ) t ON s.symbol = t.symbol
-                ORDER BY COALESCE(n.stock_name, s.symbol) ASC;
-            """)
-            stock_rows = cur.fetchall()
-
-            # Query historical close prices for all symbols
-            cur.execute("""
-                SELECT symbol, trade_date, close
-                FROM stock_history
-                ORDER BY symbol, trade_date ASC;
-            """)
-            history_rows = cur.fetchall()
-        conn.close()
-
-        from collections import defaultdict
-        sym_history = defaultdict(list)
-        for sym, t_date, close in history_rows:
-            if close is not None:
-                sym_history[sym].append({'date': t_date, 'close': float(close)})
+        try:
+            rows = crossovers.compute_all(conn)
+        finally:
+            conn.close()
 
         breakouts_list = []
-        for idx, r in enumerate(stock_rows):
-            symbol = r[0]
-            stock_name = r[1] or symbol
-            mcap = r[2] or '—'
+        for r in rows:
+            mcap = r['marketCapRaw'] or '—'
             if mcap != '—' and not str(mcap).startswith('₹') and not str(mcap).endswith('Cr'):
                 mcap = f"₹{mcap} Cr"
-            price = r[3] or '—'
+            price = r['priceRaw'] or '—'
             if price != '—' and not str(price).startswith('₹'):
                 price = f"₹{price}"
 
-            rows = sym_history.get(symbol, [])
-            bo_stats = calc_breakout_stats(rows)
-
+            bo = r['breakout']
             breakouts_list.append({
-                "id": idx + 1,
-                "ticker": symbol,
-                "stockName": stock_name,
+                "id": r['id'],
+                "ticker": r['ticker'],
+                "stockName": r['stockName'],
                 "marketCap": mcap,
                 "price": price,
-                "highBreakout": bo_stats['highBreakout'],
-                "highPct": bo_stats['highPct'],
-                "highBase": bo_stats['highBase'],
-                "lowBreakout": bo_stats['lowBreakout'],
-                "lowPct": bo_stats['lowPct'],
-                "lowBase": bo_stats['lowBase']
+                "highBreakout": bo['highBreakout'],
+                "highPct": bo['highPct'],
+                "highBase": bo['highBase'],
+                "lowBreakout": bo['lowBreakout'],
+                "lowPct": bo['lowPct'],
+                "lowBase": bo['lowBase']
             })
 
         return jsonify({"breakouts": breakouts_list, "count": len(breakouts_list)})
@@ -2633,6 +2418,226 @@ def delete_user_api(user_id=None):
         return jsonify({"status": "success", "message": f"User ID {uid} deleted"})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/chat', methods=['POST'])
+def ai_chat_assistant_api():
+    """Tara AI chat endpoint.
+
+    Routes the question through the local Ollama agent (ai_agent.py), which answers from
+    live `trading_db` data via read-only tools. If Ollama is unreachable, the model isn't
+    built, or the call errors out, falls back to the deterministic keyword engine below so
+    the chat window keeps working.
+    """
+    data = request.get_json() or {}
+    user_msg = (data.get('message') or '').strip()
+    history = data.get('history') or []
+
+    if not user_msg:
+        return jsonify({
+            "response": "Hi there! I'm **Tara AI**, connected live to your StockInsight database.\n"
+                        "Ask me about any stock's metrics, analyst consensus, forum sentiment, "
+                        "insider trades, watchlist exit alerts, or the broader market."
+        })
+
+    if agent_enabled():
+        try:
+            return jsonify(run_agent(user_msg, history, get_db_conn))
+        except AgentUnavailable:
+            pass
+        except Exception as e:
+            app.logger.exception("Tara AI agent failed; falling back to keyword engine")
+            fallback = _keyword_chat_reply(user_msg)
+            resp = fallback[0] if isinstance(fallback, tuple) else fallback
+            payload = resp.get_json() or {}
+            payload.setdefault("response", "I hit a problem reaching the local AI model. "
+                                           "Try asking about a specific stock symbol.")
+            payload["agentError"] = str(e)
+            return jsonify(payload)
+
+    return _keyword_chat_reply(user_msg)
+
+
+def _keyword_chat_reply(user_msg):
+    """Deterministic keyword-matching fallback. No LLM, no API key required."""
+    try:
+        msg_lower = user_msg.lower()
+        conn = get_db_conn()
+
+        # 1. Check for specific stock symbol match in message
+        words = re.findall(r'\b[A-Za-z0-9\-]+\b', user_msg.upper())
+        matched_symbol = None
+        matched_stock = None
+
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT symbol, stock_name, price, market_cap FROM nifty_750;")
+            all_nifty = cur.fetchall()
+            symbol_map = {n['symbol'].upper(): n for n in all_nifty if n.get('symbol')}
+
+            for w in words:
+                if w in symbol_map:
+                    matched_symbol = w
+                    matched_stock = symbol_map[w]
+                    break
+
+            if not matched_symbol:
+                for n in all_nifty:
+                    s_name = (n.get('stock_name') or '').lower()
+                    if len(user_msg) >= 3 and s_name and (s_name in msg_lower or msg_lower in s_name):
+                        matched_symbol = n['symbol'].upper()
+                        matched_stock = n
+                        break
+
+            # Scenario A: Stock Specific Query
+            if matched_symbol:
+                sym = matched_symbol
+                s_name = matched_stock.get('stock_name') or sym
+                price_val = format_price(matched_stock.get('price'))
+                mcap_val = format_mcap(matched_stock.get('market_cap'))
+
+                cur.execute("SELECT total, strong_buy, buy, hold, sell, strong_sell, consensus_rating, target_mean_price FROM consensus_recommendations WHERE UPPER(symbol) = %s;", (sym,))
+                c_row = cur.fetchone()
+
+                cur.execute("SELECT msg_count, follower_count, buy_perc, sell_perc, hold_perc, ai_summary FROM moneycontrol_boarders WHERE UPPER(symbol) = %s;", (sym,))
+                s_row = cur.fetchone()
+
+                cur.execute("SELECT trade_date, person, buy_sell, quantity, value_lacs, trade_type FROM trades WHERE UPPER(symbol) = %s ORDER BY id DESC LIMIT 3;", (sym,))
+                trade_rows = cur.fetchall()
+
+                cur.execute("SELECT period, promoters, fiis, diis, public FROM shareholding_pattern WHERE UPPER(symbol) = %s ORDER BY id DESC LIMIT 1;", (sym,))
+                shp_row = cur.fetchone()
+
+                res_lines = [f"### 📊 **{s_name} ({sym})**"]
+                res_lines.append(f"• **Current Price:** `{price_val}` | **Market Cap:** `{mcap_val}`")
+
+                if c_row:
+                    rating = c_row.get('consensus_rating') or 'N/A'
+                    total_an = c_row.get('total') or 0
+                    sb = c_row.get('strong_buy') or 0
+                    b = c_row.get('buy') or 0
+                    h = c_row.get('hold') or 0
+                    sl = c_row.get('sell') or 0
+                    ssl = c_row.get('strong_sell') or 0
+                    res_lines.append(f"• **Analyst Consensus:** **{rating}** ({total_an} analysts: {sb} Strong Buy, {b} Buy, {h} Hold, {sl} Sell, {ssl} Strong Sell)")
+
+                if s_row:
+                    msg_c = (s_row.get('msg_count') or 0)
+                    buy_p = s_row.get('buy_perc') or 0
+                    summary = (s_row.get('ai_summary') or '').strip()
+                    res_lines.append(f"• **Forum Sentiment:** `{buy_p}% Bullish` across `{msg_c:,}` boarder messages.")
+                    if summary:
+                        short_sum = summary[:180] + ('...' if len(summary) > 180 else '')
+                        res_lines.append(f"  > *AI Summary:* {short_sum}")
+
+                if shp_row:
+                    res_lines.append(f"• **Shareholding ({shp_row.get('period')}):** Promoters `{shp_row.get('promoters')}%` | FIIs `{shp_row.get('fiis')}%` | DIIs `{shp_row.get('diis')}%` | Public `{shp_row.get('public')}%`")
+
+                if trade_rows:
+                    t_str = ", ".join([f"{t.get('buy_sell')} on {t.get('trade_date')} ({t.get('person') or 'N/A'})" for t in trade_rows[:2]])
+                    res_lines.append(f"• **Recent Trades:** {t_str}")
+
+                conn.close()
+                return jsonify({
+                    "response": "\n".join(res_lines),
+                    "stockSymbol": sym
+                })
+
+            # Scenario B: High-Level / Aggregated Queries
+            if 'consensus' in msg_lower or 'rating' in msg_lower or 'strong buy' in msg_lower or 'analyst' in msg_lower:
+                cur.execute("""
+                    SELECT c.symbol, COALESCE(n.stock_name, c.symbol) as stock_name, c.consensus_rating, c.total, c.strong_buy, c.buy 
+                    FROM consensus_recommendations c 
+                    LEFT JOIN nifty_750 n ON UPPER(c.symbol) = UPPER(n.symbol)
+                    ORDER BY c.total DESC LIMIT 5;
+                """)
+                top_c = cur.fetchall()
+                conn.close()
+
+                if top_c:
+                    rows_txt = "\n".join([f"{idx+1}. **{r['stock_name']} ({r['symbol']})**: Rating **{r['consensus_rating']}** ({r['total']} Analysts: {r['strong_buy']} Strong Buy, {r['buy']} Buy)" for idx, r in enumerate(top_c)])
+                    return jsonify({
+                        "response": f"### 🎯 **Top Analyst Consensus Recommendations:**\n{rows_txt}\n\n*You can ask me about any specific stock symbol (e.g. Suzlon, Bharti Airtel, Reliance)!*"
+                    })
+
+            if 'exit' in msg_lower or 'alert' in msg_lower or 'dma' in msg_lower:
+                cur.execute("""
+                    WITH latest_dma AS (
+                        SELECT DISTINCT ON (symbol) symbol, close,
+                            ROUND(AVG(close) OVER (PARTITION BY symbol ORDER BY trade_date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)::numeric, 2) as dma20,
+                            ROUND(AVG(close) OVER (PARTITION BY symbol ORDER BY trade_date ROWS BETWEEN 49 PRECEDING AND CURRENT ROW)::numeric, 2) as dma50,
+                            ROUND(AVG(close) OVER (PARTITION BY symbol ORDER BY trade_date ROWS BETWEEN 99 PRECEDING AND CURRENT ROW)::numeric, 2) as dma100
+                        FROM stock_history ORDER BY symbol, trade_date DESC
+                    )
+                    SELECT w.symbol, w.stock_name, d.close, d.dma20, d.dma50, d.dma100
+                    FROM watchlist w
+                    JOIN latest_dma d ON UPPER(w.symbol) = UPPER(d.symbol)
+                    WHERE d.close < d.dma20 OR d.close < d.dma50 OR d.close < d.dma100
+                    LIMIT 5;
+                """)
+                alerts = cur.fetchall()
+                conn.close()
+
+                if alerts:
+                    txt = "\n".join([f"• **{a['stock_name']} ({a['symbol']})**: Price `₹{a['close']}` (20DMA: `{a['dma20']}`, 50DMA: `{a['dma50']}`, 100DMA: `{a['dma100']}`)" for a in alerts])
+                    return jsonify({"response": f"### ⚠️ **Watchlist Exit Signals (DMA Fall):**\n{txt}\n\n*Check the Watchlist Modal in Navbar for full detailed exit alerts.*"})
+                else:
+                    return jsonify({"response": "### ✅ **Watchlist Exit Signals:**\nAll clear! No current watchlist stocks are below their DMA exit levels."})
+
+            if 'sentiment' in msg_lower or 'boarder' in msg_lower or 'forum' in msg_lower or 'message' in msg_lower:
+                cur.execute("""
+                    SELECT m.symbol, COALESCE(n.stock_name, m.stock_name, m.symbol) as stock_name, m.msg_count, m.buy_perc 
+                    FROM moneycontrol_boarders m 
+                    LEFT JOIN nifty_750 n ON UPPER(m.symbol) = UPPER(n.symbol)
+                    ORDER BY m.msg_count DESC LIMIT 5;
+                """)
+                s_top = cur.fetchall()
+                conn.close()
+
+                if s_top:
+                    txt = "\n".join([f"{idx+1}. **{r['stock_name']} ({r['symbol']})**: `{r['msg_count']:,}` messages ({r['buy_perc']}% Bullish)" for idx, r in enumerate(s_top)])
+                    return jsonify({"response": f"### 💬 **Top Discussion Boarders & Forum Sentiment:**\n{txt}"})
+
+            if 'trade' in msg_lower or 'insider' in msg_lower or 'bulk' in msg_lower or 'block' in msg_lower:
+                cur.execute("""
+                    SELECT trade_date, symbol, person, buy_sell, quantity, value_lacs, trade_type 
+                    FROM trades 
+                    ORDER BY id DESC LIMIT 5;
+                """)
+                top_t = cur.fetchall()
+                conn.close()
+
+                if top_t:
+                    txt = "\n".join([f"• **{r['symbol']}** ({r['trade_date']}): {r['buy_sell']} by {r['person']} (Qty: {r['quantity']}, {r['value_lacs']} Lacs)" for r in top_t])
+                    return jsonify({"response": f"### 📈 **Latest Insider & Bulk Trades:**\n{txt}"})
+
+            if 'global' in msg_lower or 'commodity' in msg_lower or 'indices' in msg_lower or 'oil' in msg_lower or 'gold' in msg_lower:
+                cur.execute("SELECT DISTINCT ON (name) name, close as price, trade_date FROM commodity_history ORDER BY name, trade_date DESC LIMIT 4;")
+                comms = cur.fetchall()
+                cur.execute("SELECT DISTINCT ON (index_name) index_name, close as price, trade_date FROM global_index_history ORDER BY index_name, trade_date DESC LIMIT 4;")
+                glob = cur.fetchall()
+                conn.close()
+
+                c_txt = ", ".join([f"**{c['name']}**: `${c['price']}`" for c in comms]) if comms else "N/A"
+                g_txt = ", ".join([f"**{g['index_name']}**: `{g['price']}`" for g in glob]) if glob else "N/A"
+
+                return jsonify({
+                    "response": f"### 🌐 **Global Markets & Commodities:**\n• **Commodities:** {c_txt}\n• **Global Indices:** {g_txt}"
+                })
+
+            if 'feature' in msg_lower or 'scheduler' in msg_lower or 'how' in msg_lower or 'project' in msg_lower or 'about' in msg_lower:
+                conn.close()
+                return jsonify({
+                    "response": "### 🚀 **About StockInsight Engine:**\n• **Real-Time Data Engine**: Aggregates Nifty 750 stocks, Insider Trades, Shareholding Patterns, 20/50/100 DMA Trends, Breakouts, Financial Metrics, Consensus Recommendations, and Moneycontrol Boarder Sentiments.\n• **Automated Scheduler**: Background scrapers sync market prices, boarders, and analyst recommendations periodically.\n• **Watchlist Alerts**: Provides automatic exit alerts whenever a stock drops below 20 DMA (Lite), 50 DMA (Exit), or 100 DMA (Strong Exit)."
+                })
+
+            conn.close()
+
+        return jsonify({
+            "response": f"I analyzed your question: *\"{user_msg}\"*\n\nTry asking me about:\n• Any stock symbol e.g., **\"Show Suzlon metrics\"** or **\"Bharti Airtel consensus\"**\n• **\"Top analyst recommendations\"**\n• **\"Watchlist exit alerts\"**\n• **\"Latest insider trades\"**\n• **\"Forum sentiment & boarders\"**"
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e), "response": f"Sorry, I encountered an error checking the database: {str(e)}"}), 500
 
 
 if __name__ == '__main__':

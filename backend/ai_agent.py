@@ -572,6 +572,82 @@ def t_get_crossovers(conn, tier="golden", limit=5, sort_by="recent", symbol=None
     }
 
 
+def t_get_momentum_candidates(conn, gap_min=10, gap_max=15, limit=5, require_uptrend=True,
+                              sort_by="strength"):
+    """Stocks with runway: trading a set percentage BELOW their 2-year base high.
+
+    The point is headroom. A stock 12% under its base high needs a 12% move to reclaim
+    that level; one already far above it has no defined target left. Requiring an uptrend
+    matters as much as the gap — a stock can sit 12% below its high because it is climbing
+    toward it or because it is falling away from it, and only the first is a candidate.
+    """
+    try:
+        gap_min = float(gap_min if gap_min is not None else 10)
+        gap_max = float(gap_max if gap_max is not None else 15)
+    except (TypeError, ValueError):
+        gap_min, gap_max = 10.0, 15.0
+    if gap_min > gap_max:
+        gap_min, gap_max = gap_max, gap_min
+    gap_min, gap_max = max(0.0, gap_min), min(gap_max, 90.0)
+    limit = max(1, min(int(limit or 5), 25))
+
+    rows = crossovers.compute_all(conn)
+    candidates = []
+    for r in rows:
+        m = r["momentum"]
+        gap = m.get("gapToHighPct")
+        if gap is None or not (gap_min <= gap <= gap_max):
+            continue
+
+        tier = next((t for t in ("pro", "golden", "lite") if r[t]["isActive"]), None)
+        rising = bool(m.get("aboveDma20")) or bool(m.get("aboveDma50"))
+        if require_uptrend and not (tier or rising):
+            continue
+
+        tier_rank = {"pro": 3, "golden": 2, "lite": 1}.get(tier, 0)
+        candidates.append({
+            "symbol": r["ticker"],
+            "stock_name": r["stockName"],
+            "price": format_price(m.get("lastClose")),
+            "market_cap": format_mcap(r["marketCapRaw"]),
+            "base_high": format_price(m.get("baseHigh")),
+            "upside_to_base_high_pct": round(gap, 1),
+            "return_1m_pct": m.get("ret20d"),
+            "return_3m_pct": m.get("ret60d"),
+            "return_6m_pct": m.get("ret120d"),
+            "above_20dma": m.get("aboveDma20"),
+            "above_50dma": m.get("aboveDma50"),
+            "crossover_tier": tier,
+            "_tier_rank": tier_rank,
+        })
+
+    sorters = {
+        # Best-supported first: strongest trend tier, then strongest recent move.
+        "strength": lambda c: (-c["_tier_rank"], -(c["return_1m_pct"] or -999)),
+        "closest": lambda c: (c["upside_to_base_high_pct"], -c["_tier_rank"]),
+        "biggest_upside": lambda c: (-c["upside_to_base_high_pct"], -c["_tier_rank"]),
+        "recent_return": lambda c: (-(c["return_1m_pct"] or -999), -c["_tier_rank"]),
+    }
+    key = sorters.get(str(sort_by).lower(), sorters["strength"])
+    candidates.sort(key=key)
+    for c in candidates:
+        c.pop("_tier_rank", None)
+
+    return {
+        "definition": (f"Stocks trading {gap_min:g}-{gap_max:g}% BELOW their 2-year base high — "
+                       f"the gap is the upside needed to reclaim that high"
+                       + (", filtered to those in an uptrend" if require_uptrend else "")),
+        "band": {"gap_min_pct": gap_min, "gap_max_pct": gap_max},
+        "uptrend_required": bool(require_uptrend),
+        "sorted_by": sort_by,
+        "matches_in_band": len(candidates),
+        "results": candidates[:limit],
+        "note": "Already filtered and ranked across all 750 stocks. Report these rows in order. "
+                "upside_to_base_high_pct is the move needed to reach the prior high, not a "
+                "forecast or a target price.",
+    }
+
+
 def t_screen_best_stocks(conn, limit=5, include_consensus=False, require_trend=False,
                          market_cap_min_cr=None, focus=None, require_all=False,
                          min_score=60):
@@ -604,8 +680,32 @@ def t_screen_best_stocks(conn, limit=5, include_consensus=False, require_trend=F
     )
 
 
+# Mirrors scheduler.py: full batch 05:00 Mon-Sat, boarders every 2h 08:00-18:00 Mon-Sat.
+# Kept as plain constants rather than importing scheduler.py, whose module-level
+# logging.basicConfig() would reconfigure Flask's logging as a side effect of import.
+SCRAPE_FULL_BATCH_HOUR = 5
+SCRAPE_BOARDERS_HOURS = [8, 10, 12, 14, 16, 18]
+
+
+def _next_scrape(now=None):
+    """Next scheduled scrape after `now`, skipping Sundays."""
+    now = now or _dt.datetime.now()
+    best = None
+    for offset in range(8):
+        day = (now + _dt.timedelta(days=offset)).date()
+        if day.weekday() == 6:                      # Sunday: scheduler skips it
+            continue
+        slots = [(SCRAPE_FULL_BATCH_HOUR, "full scrape batch")]
+        slots += [(h, "forum sentiment refresh") for h in SCRAPE_BOARDERS_HOURS]
+        for hour, label in slots:
+            when = _dt.datetime.combine(day, _dt.time(hour=hour))
+            if when > now and (best is None or when < best[0]):
+                best = (when, label)
+    return best
+
+
 def t_get_data_freshness(conn):
-    return _row(conn, """
+    stamps = _row(conn, """
         SELECT (SELECT MAX(scraped_at) FROM trades)                     AS insider_trades,
                (SELECT MAX(scraped_at) FROM shareholding_pattern)       AS shareholding,
                (SELECT MAX(scraped_at) FROM stock_history)              AS price_history,
@@ -619,6 +719,18 @@ def t_get_data_freshness(conn):
                (SELECT MAX(updated_at) FROM nifty_750)                  AS nifty_750,
                NOW()                                                    AS server_time;
     """)
+    nxt = _next_scrape()
+    stamps["schedule"] = {
+        "full_batch": "05:00 every day except Sunday — prices, history, trades, "
+                      "shareholding, financials, consensus, global, commodities",
+        "forum_sentiment": "every 2 hours from 08:00 to 18:00, every day except Sunday",
+        "next_run": nxt[0].strftime("%Y-%m-%d %H:%M") if nxt else None,
+        "next_run_is": nxt[1] if nxt else None,
+    }
+    stamps["note"] = ("Every answer reads the database live at question time, so figures are "
+                      "as current as the last scrape shown above — there is no separate "
+                      "refresh step and nothing is cached in the model.")
+    return stamps
 
 
 TOOL_IMPLS = {
@@ -632,6 +744,7 @@ TOOL_IMPLS = {
     "get_financials": t_get_financials,
     "get_shareholding_trend": t_get_shareholding_trend,
     "get_crossovers": t_get_crossovers,
+    "get_momentum_candidates": t_get_momentum_candidates,
     "screen_best_stocks": t_screen_best_stocks,
     "get_data_freshness": t_get_data_freshness,
 }
@@ -788,6 +901,32 @@ TOOLS = [
         },
     ),
     _tool(
+        "get_momentum_candidates",
+        "Stocks with room to run: trading a chosen percentage BELOW their 2-year base high, "
+        "so that gap is the upside needed to reclaim the high. THIS is the tool for "
+        "'momentum stocks', 'stocks with upside', 'which stocks can go higher', 'near "
+        "breakout' or 'about to break out'. Do NOT use get_crossovers or screen_best_stocks "
+        "for those — their breakout measure rewards stocks already far ABOVE the high, which "
+        "is the opposite of headroom.",
+        {
+            "gap_min": {"type": "number", "description": "Minimum % below the base high. Default 10."},
+            "gap_max": {"type": "number", "description": "Maximum % below the base high. Default 15."},
+            "limit": {"type": "integer", "description": "Rows to return, 1-25. Default 5."},
+            "require_uptrend": {
+                "type": "boolean",
+                "description": "Keep only stocks in a DMA crossover or above their 20/50 DMA, so "
+                               "you get stocks climbing toward the high rather than falling away "
+                               "from it. Default true.",
+            },
+            "sort_by": {
+                "type": "string",
+                "enum": ["strength", "closest", "biggest_upside", "recent_return"],
+                "description": "strength = best trend then best recent move (default); closest = "
+                               "nearest to the high; biggest_upside = largest gap in band.",
+            },
+        },
+    ),
+    _tool(
         "screen_best_stocks",
         "Scores ALL 750 stocks across every criterion at once — trends, breakout, metrics, "
         "ownership, insider trades and sentiment — and returns the highest-scoring ones with "
@@ -830,7 +969,9 @@ TOOLS = [
     ),
     _tool(
         "get_data_freshness",
-        "When each dataset was last scraped, plus current server time.",
+        "When each dataset was last scraped, the scrape schedule, and when the next update "
+        "runs. Use for 'how fresh is this', 'when does it update', 'is this real-time', "
+        "or when a figure needs a staleness caveat.",
     ),
 ]
 
@@ -906,7 +1047,8 @@ House definitions — use these exact meanings:
 • DMA is the daily moving average of closing price. StockInsight tracks 20, 50 and 100 DMA.
 • Exit signals are strictly price vs DMA: below 20 DMA is a "Lite Exit", below 50 DMA is an \
 "Exit", below 100 DMA is a "Strong Exit". Above all three is "holding above all DMAs".
-• A breakout is measured against the 2-year high or low.
+• A breakout is measured against the 2-year base high. Note the direction carefully: a stock ABOVE that high has already broken out and has no defined target left, while a stock BELOW it has that gap as upside.
+• "Momentum" in StockInsight means capacity to rise, not distance already travelled. A momentum candidate trades BELOW its 2-year base high — typically 10-15% below — so the gap is the move needed to reclaim that level, and it is in an uptrend so it is climbing toward the high rather than falling away from it. Never answer a momentum question with stocks that are already far above their high; that is the opposite of what is being asked.
 • Crossovers are always measured against the 200 DMA, and the Trends tab names three tiers: \
 "Lite" is the 20 DMA above the 200 DMA, "Golden" is the 50 DMA above the 200 DMA (with the 20 \
 also above), "Pro" is the 100 DMA above the 200 DMA (with the 20 and 50 also above). "Golden \
@@ -915,6 +1057,7 @@ has been active, how many times it has occurred historically, the share of those
 that gained ("probability"), and the average gain.
 • Market caps are in ₹ crore; 100000 crore is written ₹1.00L Cr (one lakh crore).
 • Trade values in the trades table are in lacs, not crore.
+• The database holds NO valuation ratios (P/E, P/B, EV/EBITDA), NO dividend or yield data, NO news or announcements, and NO intraday or live tick prices — closes are end-of-day. If asked for any of those, say plainly that you don't have it rather than estimating or substituting something else.
 • "Boarders" are Moneycontrol message-board participants — retail forum sentiment, not analysts. \
 Never conflate boarder sentiment with analyst consensus; they are separate signals that often \
 disagree, and saying so is often the useful insight."""
@@ -950,21 +1093,53 @@ _SCREEN_INTENT = re.compile(
     re.IGNORECASE,
 )
 
-# Anything that needs a number from the database. Used to decide whether answering with
-# zero tool calls is acceptable (a greeting) or a hallucination risk (everything else).
-_DATA_INTENT = re.compile(
-    r"\b(stock|share|price|dma|crossover|breakout|consensus|analyst|sentiment|boarder|"
-    r"forum|insider|trade|watchlist|exit|alert|promoter|fii|dii|shareholding|holding|"
-    r"metric|roe|roce|profit|sales|growth|market\s*cap|nifty|index|commodity|sector|"
-    r"buy|sell|top|best|which|compare|screen)\b",
+# Deciding whether a zero-tool answer is acceptable. This deliberately defaults to
+# "needs data": an allowlist of data keywords missed "What is the P/E ratio of Reliance?"
+# and the model answered from imagination, inventing both a price and a market cap. Only
+# recognisably conversational messages are allowed through without a lookup.
+_SMALL_TALK = re.compile(
+    r"^\s*(hi|hey|hello|yo|good\s*(morning|afternoon|evening)|thanks?|thank\s*you|ok(ay)?|"
+    r"cool|nice|great|bye|goodbye|sorry|please|help)\b[\s!.,?]*$"
+    r"|^\s*(who\s+are\s+you|what\s+are\s+you|what\s+can\s+you\s+do|how\s+do\s+you\s+work|"
+    r"what\s+do\s+you\s+know|how\s+can\s+you\s+help)\b.*$",
     re.IGNORECASE,
 )
+
+# A reply that quotes a rupee figure, a percentage, or a decimal number is making a factual
+# claim. If no tool ran, that claim cannot have come from the database.
+_QUOTES_A_FIGURE = re.compile(r"₹\s*[\d,]|\bRs\.?\s*[\d,]|\d[\d,]*\.\d|\b\d+\s*%")
+
+
+# Definitional questions are about a concept, not a stock — "what is a golden crossover?"
+# is answered from the domain brief, and demanding a tool call for it suppressed a
+# perfectly good explanation in testing. Concept words only; "what is the price of X"
+# deliberately does not match.
+_CONCEPTUAL = re.compile(
+    r"^\s*(what|what's|whats)\s+(is|are|does|do)\s+(a|an|the)?\s*"
+    r"(golden|lite|pro|death)?\s*"
+    r"(cross|crossover|dma|moving\s+average|breakout|exit\s+signal|strong\s+exit|"
+    r"lite\s+exit|consensus|boarder|sentiment|opm|roe|roce|composite|percentile)\b"
+    r"|^\s*(explain|define)\b"
+    r"|\bmean\s*\??\s*$"
+    r"|\bhow\s+(is|are|do\s+you)\b.*\b(calculated|computed|defined|work|works)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_conceptual(user_msg):
+    return bool(_CONCEPTUAL.search((user_msg or "").strip()))
+
+
+def _needs_data(user_msg):
+    msg = (user_msg or "").strip()
+    return not (_SMALL_TALK.match(msg) or _is_conceptual(msg))
 
 
 # Naming one specific criterion means a dedicated tool fits better than the whole-universe
 # screen — "top 5 golden crossover stocks" wants get_crossovers, not a composite score.
 _SPECIFIC_CRITERION = re.compile(
     r"\b(crossover|golden\s*cross|death\s*cross|breakout|watchlist|exit\s*alert|dma|"
+    r"momentum|upside|headroom|runway|room\s*to\s*(run|grow|rise)|"
     r"insider|bulk\s*deal|block\s*deal|shareholding|promoter|fii|dii|consensus|analyst|"
     r"forum|boarder|commodity|global\s*index|sector)\b",
     re.IGNORECASE,
@@ -987,8 +1162,6 @@ def _detect_screen_intent(user_msg):
     return True
 
 
-def _needs_data(user_msg):
-    return bool(_DATA_INTENT.search(user_msg or ""))
 
 
 # Keyword -> tool, used only to name candidates when the model answers with no tool call
@@ -1192,6 +1365,24 @@ def run_agent(user_message, history, get_conn):
                     continue
 
                 text = _message_content(message)
+
+                # Hard tripwire. If no tool ran, any figure in the reply was invented —
+                # there is no other source for it. Suppress rather than ship a made-up
+                # price. (Seen in testing: "Reliance last traded at ₹2345.00" against a
+                # real ₹1,275.90, with zero tool calls.)
+                if (not tools_used and not _is_conceptual(user_message)
+                        and _QUOTES_A_FIGURE.search(text or "")):
+                    return {
+                        "response": "I can't answer that from the database — I'd only be "
+                                    "guessing at the numbers, so I'd rather not. Try asking "
+                                    "about a stock's price, technicals, ownership, insider "
+                                    "trades, crossovers, or your watchlist.",
+                        "stockSymbol": last_symbol,
+                        "toolsUsed": tools_used,
+                        "model": model,
+                        "suppressed": "ungrounded figures in a no-tool answer",
+                    }
+
                 return {
                     "response": text or "I couldn't put an answer together for that. Try rephrasing?",
                     "stockSymbol": last_symbol,

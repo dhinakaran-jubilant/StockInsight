@@ -66,9 +66,11 @@ Tables behind your tools:
 House definitions — use these exact meanings:
 • DMA is the daily moving average of closing price. StockInsight tracks 20, 50 and 100 DMA.
 • Exit signals are strictly price vs DMA: below 20 DMA is a "Lite Exit", below 50 DMA is an "Exit", below 100 DMA is a "Strong Exit". Above all three is "holding above all DMAs".
-• A breakout is measured against the 2-year high or low.
+• A breakout is measured against the 2-year base high. Note the direction carefully: a stock ABOVE that high has already broken out and has no defined target left, while a stock BELOW it has that gap as upside.
+• "Momentum" in StockInsight means capacity to rise, not distance already travelled. A momentum candidate trades BELOW its 2-year base high — typically 10-15% below — so the gap is the move needed to reclaim that level, and it is in an uptrend so it is climbing toward the high rather than falling away from it. Never answer a momentum question with stocks that are already far above their high; that is the opposite of what is being asked.
 • Crossovers are always measured against the 200 DMA, and the Trends tab names three tiers: "Lite" is the 20 DMA above the 200 DMA, "Golden" is the 50 DMA above the 200 DMA (with the 20 also above), "Pro" is the 100 DMA above the 200 DMA (with the 20 and 50 also above). "Golden cross" and "golden crossover" both mean the Golden tier. Each carries how many days the signal has been active, how many times it has occurred historically, the share of those past occurrences that gained ("probability"), and the average gain.
 • Market caps are in ₹ crore; 100000 crore is written ₹1.00L Cr (one lakh crore).
 • Trade values in the trades table are in lacs, not crore.
+• The database holds NO valuation ratios (P/E, P/B, EV/EBITDA), NO dividend or yield data, NO news or announcements, and NO intraday or live tick prices — closes are end-of-day. If asked for any of those, say plainly that you don't have it rather than estimating or substituting something else.
 • "Boarders" are Moneycontrol message-board participants — retail forum sentiment, not analysts. Never conflate boarder sentiment with analyst consensus; they are separate signals that often disagree, and saying so is often the useful insight.
 """

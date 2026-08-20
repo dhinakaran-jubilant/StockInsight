@@ -479,6 +479,42 @@ TABLE_DEFINITIONS = [
             ("ai_summary", "TEXT"),
             ("scraped_at", "TIMESTAMP DEFAULT NOW()"),
         ]
+    },
+    {
+        "table": "analyst_recommendations",
+        "create": """
+            CREATE TABLE IF NOT EXISTS analyst_recommendations (
+                id                SERIAL PRIMARY KEY,
+                symbol            VARCHAR(50)   NOT NULL,
+                stock_name        VARCHAR(255),
+                report_date       DATE          NOT NULL,
+                author            VARCHAR(255)  NOT NULL,
+                ltp               VARCHAR(50),
+                target_price      VARCHAR(50),
+                price_at_reco     VARCHAR(100),
+                upside            VARCHAR(50),
+                reco_type         VARCHAR(50),
+                report_title      TEXT,
+                report_url        TEXT,
+                scraped_at        TIMESTAMP DEFAULT NOW(),
+                CONSTRAINT unique_analyst_reco UNIQUE (symbol, author, report_date)
+            );
+        """,
+        "columns": [
+            ("id", "SERIAL"),
+            ("symbol", "VARCHAR(50)"),
+            ("stock_name", "VARCHAR(255)"),
+            ("report_date", "DATE"),
+            ("author", "VARCHAR(255)"),
+            ("ltp", "VARCHAR(50)"),
+            ("target_price", "VARCHAR(50)"),
+            ("price_at_reco", "VARCHAR(100)"),
+            ("upside", "VARCHAR(50)"),
+            ("reco_type", "VARCHAR(50)"),
+            ("report_title", "TEXT"),
+            ("report_url", "TEXT"),
+            ("scraped_at", "TIMESTAMP DEFAULT NOW()"),
+        ]
     }
 ]
 

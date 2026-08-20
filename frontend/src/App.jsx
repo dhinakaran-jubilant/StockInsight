@@ -82,6 +82,26 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [userRole, setUserRole] = useState(() => (loggedInUser && loggedInUser.role ? loggedInUser.role : 'Super Admin'));
 
+  const [isSessionExpired, setIsSessionExpired] = useState(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('session_expired') === 'true') {
+        return true;
+      }
+      const savedUser = localStorage.getItem('stockinsight_logged_in_user');
+      const lastAct = localStorage.getItem('stockinsight_last_activity');
+      if (savedUser && lastAct) {
+        const INACTIVITY_TIMEOUT_MS = 60 * 60 * 1000;
+        if (Date.now() - parseInt(lastAct, 10) > INACTIVITY_TIMEOUT_MS) {
+          localStorage.removeItem('stockinsight_logged_in_user');
+          localStorage.removeItem('stockinsight_last_activity');
+          return true;
+        }
+      }
+    } catch (e) {}
+    return false;
+  });
+
   // Sync URL when state changes
   useEffect(() => {
     const targetPath = getPathFromRoute(activeMenu, activeTab);
@@ -137,10 +157,11 @@ export default function App() {
     const handleAutoLogout = () => {
       try {
         localStorage.removeItem('stockinsight_logged_in_user');
+        localStorage.removeItem('stockinsight_last_activity');
       } catch (e) {}
       setIsAuthenticated(false);
+      setIsSessionExpired(true);
       window.history.replaceState(null, '', '/login');
-      alert('Session expired due to 1 hour of inactivity. Please log in again.');
     };
 
     const resetTimer = () => {
@@ -157,6 +178,9 @@ export default function App() {
       const now = Date.now();
       if (now - lastReset > 1000) {
         lastReset = now;
+        try {
+          localStorage.setItem('stockinsight_last_activity', now.toString());
+        } catch (e) {}
         resetTimer();
       }
     };
@@ -176,12 +200,16 @@ export default function App() {
   if (!isAuthenticated) {
     return (
       <Login
+        sessionExpired={isSessionExpired}
+        onDismissSessionExpired={() => setIsSessionExpired(false)}
         onLoginSuccess={(user) => {
+          setIsSessionExpired(false);
           setIsAuthenticated(true);
           if (user) {
             setLoggedInUser(user);
             try {
               localStorage.setItem('stockinsight_logged_in_user', JSON.stringify(user));
+              localStorage.setItem('stockinsight_last_activity', Date.now().toString());
             } catch (e) {}
             if (user.role) {
               setUserRole(user.role);
@@ -223,11 +251,17 @@ export default function App() {
             setUserRole(newRole);
             setLoggedInUser((prev) => prev ? { ...prev, role: newRole } : prev);
           }}
-          onLogout={() => {
+          onLogout={(reason) => {
             try {
               localStorage.removeItem('stockinsight_logged_in_user');
+              localStorage.removeItem('stockinsight_last_activity');
             } catch (e) {}
             setIsAuthenticated(false);
+            if (reason === 'session_expired') {
+              setIsSessionExpired(true);
+            } else {
+              setIsSessionExpired(false);
+            }
             window.history.replaceState(null, '', '/login');
           }}
         />

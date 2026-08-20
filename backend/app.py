@@ -717,13 +717,13 @@ def get_stock_trend_chart(symbol):
             """, (symbol, symbol, symbol))
             stock_row = cur.fetchone()
 
-            # Query historical close prices, volume, and calculated DMAs
+            # Query historical close prices, OHLC, volume, and calculated DMAs
             cur.execute("""
                 WITH history AS (
                     SELECT 
                         symbol, 
                         trade_date, 
-                        close,
+                        open, high, low, close,
                         COALESCE(volume, 0) as volume,
                         ROUND(AVG(close) OVER (PARTITION BY symbol ORDER BY trade_date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)::numeric, 2) as dma20,
                         ROUND(AVG(close) OVER (PARTITION BY symbol ORDER BY trade_date ROWS BETWEEN 49 PRECEDING AND CURRENT ROW)::numeric, 2) as dma50,
@@ -735,7 +735,7 @@ def get_stock_trend_chart(symbol):
                 SELECT 
                     TO_CHAR(trade_date, 'YYYY-MM-DD') as date_str,
                     TO_CHAR(trade_date, 'Mon DD, YYYY') as formatted_date,
-                    close, volume, dma20, dma50, dma100, dma200
+                    open, high, low, close, volume, dma20, dma50, dma100, dma200
                 FROM history
                 ORDER BY trade_date ASC;
             """, (symbol,))
@@ -750,7 +750,7 @@ def get_stock_trend_chart(symbol):
                         SELECT 
                             index_name, 
                             trade_date, 
-                            close,
+                            open, high, low, close,
                             COALESCE(volume, 0) as volume,
                             ROUND(AVG(close) OVER (PARTITION BY index_name ORDER BY trade_date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)::numeric, 2) as dma20,
                             ROUND(AVG(close) OVER (PARTITION BY index_name ORDER BY trade_date ROWS BETWEEN 49 PRECEDING AND CURRENT ROW)::numeric, 2) as dma50,
@@ -762,7 +762,7 @@ def get_stock_trend_chart(symbol):
                     SELECT 
                         TO_CHAR(trade_date, 'YYYY-MM-DD') as date_str,
                         TO_CHAR(trade_date, 'Mon DD, YYYY') as formatted_date,
-                        close, volume, dma20, dma50, dma100, dma200
+                        open, high, low, close, volume, dma20, dma50, dma100, dma200
                     FROM history
                     ORDER BY trade_date ASC;
                 """, (symbol, symbol))
@@ -791,7 +791,7 @@ def get_stock_trend_chart(symbol):
                         SELECT 
                             symbol, 
                             trade_date, 
-                            close,
+                            open, high, low, close,
                             COALESCE(volume, 0) as volume,
                             ROUND(AVG(close) OVER (PARTITION BY symbol ORDER BY trade_date ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)::numeric, 2) as dma20,
                             ROUND(AVG(close) OVER (PARTITION BY symbol ORDER BY trade_date ROWS BETWEEN 49 PRECEDING AND CURRENT ROW)::numeric, 2) as dma50,
@@ -803,7 +803,7 @@ def get_stock_trend_chart(symbol):
                     SELECT 
                         TO_CHAR(trade_date, 'YYYY-MM-DD') as date_str,
                         TO_CHAR(trade_date, 'Mon DD, YYYY') as formatted_date,
-                        close, volume, dma20, dma50, dma100, dma200
+                        open, high, low, close, volume, dma20, dma50, dma100, dma200
                     FROM history
                     ORDER BY trade_date ASC;
                 """, (symbol, symbol))
@@ -836,16 +836,22 @@ def get_stock_trend_chart(symbol):
 
         history_list = []
         for r in history_rows:
-            close_val = float(r[2]) if (r[2] is not None and float(r[2]) > 0) else None
+            close_val = float(r[5]) if (r[5] is not None and float(r[5]) > 0) else None
+            open_val = float(r[2]) if (r[2] is not None and float(r[2]) > 0) else close_val
+            high_val = float(r[3]) if (r[3] is not None and float(r[3]) > 0) else max(open_val or 0, close_val or 0)
+            low_val = float(r[4]) if (r[4] is not None and float(r[4]) > 0) else min(open_val or 0, close_val or 0)
             history_list.append({
                 "date": r[0],
                 "label": r[1],
+                "open": open_val,
+                "high": high_val,
+                "low": low_val,
                 "close": close_val,
-                "volume": int(r[3]) if r[3] is not None else 0,
-                "dma20": float(r[4]) if (r[4] is not None and float(r[4]) > 0) else None,
-                "dma50": float(r[5]) if (r[5] is not None and float(r[5]) > 0) else None,
-                "dma100": float(r[6]) if (r[6] is not None and float(r[6]) > 0) else None,
-                "dma200": float(r[7]) if (r[7] is not None and float(r[7]) > 0) else None
+                "volume": int(r[6]) if r[6] is not None else 0,
+                "dma20": float(r[7]) if (r[7] is not None and float(r[7]) > 0) else None,
+                "dma50": float(r[8]) if (r[8] is not None and float(r[8]) > 0) else None,
+                "dma100": float(r[9]) if (r[9] is not None and float(r[9]) > 0) else None,
+                "dma200": float(r[10]) if (r[10] is not None and float(r[10]) > 0) else None
             })
 
         return jsonify({
@@ -1453,7 +1459,25 @@ def get_symbol_consensus_recommendations(symbol):
                     WHERE UPPER(c.symbol) = UPPER(%s);
                 """, (symbol,))
                 row = cur.fetchone()
+
+            # Query detailed analyst recommendations for this stock
+            cur.execute("""
+                SELECT 
+                    id, symbol, stock_name, report_date, author, ltp, target_price,
+                    price_at_reco, upside, reco_type, report_title, report_url, scraped_at
+                FROM analyst_recommendations
+                WHERE UPPER(symbol) = UPPER(%s)
+                ORDER BY report_date DESC, id DESC;
+            """, (symbol,))
+            analyst_rows = cur.fetchall() or []
+
         conn.close()
+
+        for a in analyst_rows:
+            if a.get('report_date'):
+                a['report_date'] = a['report_date'].strftime("%d %b %Y")
+            if a.get('scraped_at'):
+                a['scraped_at'] = a['scraped_at'].strftime("%d %b %Y, %I:%M %p")
 
         if row:
             row['market_cap'] = format_mcap(row.get('market_cap'))
@@ -1461,10 +1485,18 @@ def get_symbol_consensus_recommendations(symbol):
             row['price'] = format_price(row.get('price'))
             if row.get('scraped_at'):
                 row['scraped_at'] = row['scraped_at'].strftime("%d %b %Y, %I:%M %p")
+            row['analyst_details'] = analyst_rows
+            return jsonify(row)
 
-        return jsonify(row or {"symbol": symbol.upper(), "stock_name": symbol.upper(), "total": 0, "consensus_rating": "N/A"})
+        return jsonify({
+            "symbol": symbol.upper(),
+            "stock_name": symbol.upper(),
+            "total": 0,
+            "consensus_rating": "N/A",
+            "analyst_details": analyst_rows
+        })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e), "analyst_details": []}), 500
 
 
 @app.route('/api/sentiment', methods=['GET'])

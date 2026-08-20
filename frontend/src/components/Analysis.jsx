@@ -108,6 +108,8 @@ const calcTradeValueInCrs = (qty, pr, valueLacs) => {
 
 const TrendPriceDMAChart = ({ history = [], isBreakoutMode = false, isGlobalMode = false }) => {
 	const [timeframe, setTimeframe] = useState('1Y');
+	const [chartType, setChartType] = useState('line'); // 'line' | 'candle'
+	const [zoomRange, setZoomRange] = useState(null); // [startIdx, endIdx] or null for default timeframe
 	const [activeLines, setActiveLines] = useState({
 		close: true,
 		dma20: !isBreakoutMode,
@@ -118,6 +120,14 @@ const TrendPriceDMAChart = ({ history = [], isBreakoutMode = false, isGlobalMode
 		overallHigh: isBreakoutMode
 	});
 	const [hoveredIdx, setHoveredIdx] = useState(null);
+	const [isDragging, setIsDragging] = useState(false);
+	const dragRef = useRef({ isDown: false, startX: 0, startRange: [0, 0] });
+	const chartContainerRef = useRef(null);
+
+	// Reset zoom when history prop changes
+	useEffect(() => {
+		setZoomRange(null);
+	}, [history]);
 
 	// Filter out trailing null/empty/0 price entries from history so chart uses valid data up to previous day
 	const validHistory = useMemo(() => {
@@ -137,19 +147,6 @@ const TrendPriceDMAChart = ({ history = [], isBreakoutMode = false, isGlobalMode
 		return history.slice(0, endIdx);
 	}, [history]);
 
-	if (!validHistory || validHistory.length === 0) return null;
-
-	// Calculate Overall High Baseline Price (from 2 years ago to 3 months ago: indices totalPoints - 504 to totalPoints - 63)
-	const overallHighVal = useMemo(() => {
-		if (!isBreakoutMode || !validHistory || validHistory.length < 63) return null;
-		const totalPts = validHistory.length;
-		const endBaseIdx = Math.max(0, totalPts - 63);
-		const startBaseIdx = Math.max(0, totalPts - 504);
-		const baseWindow = validHistory.slice(startBaseIdx, endBaseIdx);
-		if (baseWindow.length === 0) return null;
-		return Math.max(...baseWindow.map((r) => r.close || 0));
-	}, [validHistory, isBreakoutMode]);
-
 	const getTimeframeDays = (tf) => {
 		switch (tf) {
 			case '1M': return 21;
@@ -163,15 +160,44 @@ const TrendPriceDMAChart = ({ history = [], isBreakoutMode = false, isGlobalMode
 	};
 
 	const count = getTimeframeDays(timeframe);
-	const dataSlice = validHistory.slice(-count);
+
+	const dataSlice = useMemo(() => {
+		if (!validHistory || validHistory.length === 0) return [];
+		if (zoomRange) {
+			const [start, end] = zoomRange;
+			return validHistory.slice(start, end);
+		}
+		return validHistory.slice(-count);
+	}, [validHistory, timeframe, count, zoomRange]);
+
 	const totalPoints = dataSlice.length;
+
+	// Calculate Overall High Baseline Price (from 2 years ago to 3 months ago: indices totalPoints - 504 to totalPoints - 63)
+	const overallHighVal = useMemo(() => {
+		if (!isBreakoutMode || !validHistory || validHistory.length < 63) return null;
+		const totalPts = validHistory.length;
+		const endBaseIdx = Math.max(0, totalPts - 63);
+		const startBaseIdx = Math.max(0, totalPts - 504);
+		const baseWindow = validHistory.slice(startBaseIdx, endBaseIdx);
+		if (baseWindow.length === 0) return null;
+		return Math.max(...baseWindow.map((r) => r.close || 0));
+	}, [validHistory, isBreakoutMode]);
+
+	if (!validHistory || validHistory.length === 0) return null;
 
 	let minY = Infinity;
 	let maxY = -Infinity;
 
 	dataSlice.forEach((item) => {
 		const values = [];
-		if (activeLines.close && item.close) values.push(item.close);
+		if (chartType === 'candle') {
+			if (item.high) values.push(item.high);
+			if (item.low) values.push(item.low);
+			if (item.open) values.push(item.open);
+			if (item.close) values.push(item.close);
+		} else {
+			if (activeLines.close && item.close) values.push(item.close);
+		}
 		if (activeLines.dma20 && item.dma20) values.push(item.dma20);
 		if (activeLines.dma50 && item.dma50) values.push(item.dma50);
 		if (activeLines.dma100 && item.dma100) values.push(item.dma100);
@@ -229,6 +255,133 @@ const TrendPriceDMAChart = ({ history = [], isBreakoutMode = false, isGlobalMode
 		return { x, y, avgVol: avg };
 	});
 
+	// Handle pointer down (click & hold) to start panning/dragging
+	const handlePointerDown = (e) => {
+		if (!validHistory || validHistory.length === 0) return;
+		const elem = chartContainerRef.current;
+		if (!elem) return;
+
+		const rect = elem.getBoundingClientRect();
+		const mouseX = e.clientX - rect.left - paddingLeft;
+
+		const defaultCount = getTimeframeDays(timeframe);
+		const defaultStart = Math.max(0, validHistory.length - defaultCount);
+		const defaultEnd = validHistory.length;
+
+		const currentStart = zoomRange ? zoomRange[0] : defaultStart;
+		const currentEnd = zoomRange ? zoomRange[1] : defaultEnd;
+
+		dragRef.current = {
+			isDown: true,
+			startX: mouseX,
+			startRange: [currentStart, currentEnd]
+		};
+
+		setIsDragging(true);
+		setHoveredIdx(null);
+	};
+
+	// Attach pointer move/up listeners globally for smooth drag panning
+	useEffect(() => {
+		const handlePointerMove = (e) => {
+			if (!dragRef.current.isDown || !chartContainerRef.current) return;
+
+			const elem = chartContainerRef.current;
+			const rect = elem.getBoundingClientRect();
+			const currentMouseX = e.clientX - rect.left - paddingLeft;
+			const deltaX = currentMouseX - dragRef.current.startX;
+
+			const [start, end] = dragRef.current.startRange;
+			const L = end - start;
+			if (L <= 0) return;
+
+			const indexShift = Math.round((deltaX / chartWidth) * L);
+			let newStart = start - indexShift;
+			let newEnd = end - indexShift;
+
+			if (newStart < 0) {
+				newStart = 0;
+				newEnd = Math.min(validHistory.length, L);
+			}
+			if (newEnd > validHistory.length) {
+				newEnd = validHistory.length;
+				newStart = Math.max(0, validHistory.length - L);
+			}
+
+			setZoomRange([newStart, newEnd]);
+		};
+
+		const handlePointerUp = () => {
+			if (dragRef.current.isDown) {
+				dragRef.current.isDown = false;
+				setIsDragging(false);
+			}
+		};
+
+		window.addEventListener('pointermove', handlePointerMove);
+		window.addEventListener('pointerup', handlePointerUp);
+		window.addEventListener('pointercancel', handlePointerUp);
+
+		return () => {
+			window.removeEventListener('pointermove', handlePointerMove);
+			window.removeEventListener('pointerup', handlePointerUp);
+			window.removeEventListener('pointercancel', handlePointerUp);
+		};
+	}, [validHistory, chartWidth, paddingLeft]);
+
+	// Attach wheel event listener for pointed area zoom in/out
+	useEffect(() => {
+		const elem = chartContainerRef.current;
+		if (!elem || !validHistory || validHistory.length === 0) return;
+
+		const handleWheel = (e) => {
+			e.preventDefault();
+			const rect = elem.getBoundingClientRect();
+			const mouseX = e.clientX - rect.left - paddingLeft;
+			const mouseRatio = Math.max(0, Math.min(1, mouseX / chartWidth));
+
+			setZoomRange((prevRange) => {
+				const defaultCount = getTimeframeDays(timeframe);
+				const defaultStart = Math.max(0, validHistory.length - defaultCount);
+				const defaultEnd = validHistory.length;
+
+				const start = prevRange ? prevRange[0] : defaultStart;
+				const end = prevRange ? prevRange[1] : defaultEnd;
+				const L = end - start;
+
+				const focusIdx = start + mouseRatio * L;
+				const factor = e.deltaY < 0 ? 0.82 : 1.22;
+				const minL = 8;
+				const maxL = validHistory.length;
+
+				let newL = Math.max(minL, Math.min(maxL, L * factor));
+				let newStart = focusIdx - mouseRatio * newL;
+				let newEnd = focusIdx + (1 - mouseRatio) * newL;
+
+				if (newStart < 0) {
+					newEnd = Math.min(validHistory.length, newEnd - newStart);
+					newStart = 0;
+				}
+				if (newEnd > validHistory.length) {
+					newStart = Math.max(0, newStart - (newEnd - validHistory.length));
+					newEnd = validHistory.length;
+				}
+
+				const clampedStart = Math.max(0, Math.round(newStart));
+				const clampedEnd = Math.min(validHistory.length, Math.max(clampedStart + minL, Math.round(newEnd)));
+
+				if (clampedStart === 0 && clampedEnd === validHistory.length && defaultStart === 0) {
+					return null;
+				}
+
+				return [clampedStart, clampedEnd];
+			});
+		};
+
+		elem.addEventListener('wheel', handleWheel, { passive: false });
+		return () => elem.removeEventListener('wheel', handleWheel);
+	}, [validHistory, timeframe, chartWidth, paddingLeft]);
+
 	const yTicks = [];
 	for (let i = 0; i <= 4; i++) {
 		const val = minY + (i / 4) * (maxY - minY);
@@ -279,15 +432,17 @@ const TrendPriceDMAChart = ({ history = [], isBreakoutMode = false, isGlobalMode
 		<div className="bg-slate-50/80 border border-slate-200/70 rounded-xl p-5 relative shadow-2xs">
 			<div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
 				<div className="flex items-center gap-3 self-start flex-wrap">
+					{/* Timeframe Selector */}
 					<div className="bg-slate-200/80 p-1 rounded-xl flex items-center gap-1">
 						{['1M', '3M', '6M', '1Y', '3Y', '5Y'].map((tf) => (
 							<button
 								key={tf}
 								onClick={() => {
 									setTimeframe(tf);
+									setZoomRange(null);
 									setHoveredIdx(null);
 								}}
-								className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${timeframe === tf
+								className={`px-3 py-1 text-xs font-bold rounded-lg transition-all cursor-pointer ${timeframe === tf && !zoomRange
 									? 'bg-white text-[#9462d2] shadow-xs border border-purple-100/80'
 									: 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
 									}`}
@@ -296,6 +451,47 @@ const TrendPriceDMAChart = ({ history = [], isBreakoutMode = false, isGlobalMode
 							</button>
 						))}
 					</div>
+
+					{/* Line vs Candle Chart Type Toggle Button Group */}
+					<div className="bg-slate-200/80 p-1 rounded-xl flex items-center gap-1">
+						<button
+							type="button"
+							onClick={() => setChartType('line')}
+							className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${chartType === 'line'
+								? 'bg-white text-[#9462d2] shadow-xs border border-purple-100/80'
+								: 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+								}`}
+							title="Switch to Line Chart Mode"
+						>
+							<span className="material-symbols-outlined text-[15px] leading-none">show_chart</span>
+							<span>Line</span>
+						</button>
+						<button
+							type="button"
+							onClick={() => setChartType('candle')}
+							className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${chartType === 'candle'
+								? 'bg-white text-[#9462d2] shadow-xs border border-purple-100/80'
+								: 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+								}`}
+							title="Switch to Candlestick Chart Mode"
+						>
+							<span className="material-symbols-outlined text-[15px] leading-none">candlestick_chart</span>
+							<span>Candle</span>
+						</button>
+					</div>
+
+					{/* Reset Zoom Button when zoomed */}
+					{zoomRange && (
+						<button
+							type="button"
+							onClick={() => setZoomRange(null)}
+							className="px-2.5 py-1 text-xs font-bold rounded-lg bg-purple-100 text-[#9462d2] hover:bg-purple-200 transition-all flex items-center gap-1.5 cursor-pointer border border-purple-200 shadow-2xs"
+							title="Reset Zoom to standard timeframe"
+						>
+							<span className="material-symbols-outlined text-[15px] leading-none">zoom_out_map</span>
+							<span>Reset Zoom</span>
+						</button>
+					)}
 
 					{/* Overall High Badge next to Period Tabs */}
 					{isBreakoutMode && overallHighVal && (
@@ -307,24 +503,27 @@ const TrendPriceDMAChart = ({ history = [], isBreakoutMode = false, isGlobalMode
 				</div>
 
 				<div className="flex items-center gap-2 flex-wrap text-xs font-semibold">
-					{lines.map((l) => (
-						<button
-							key={l.key}
-							onClick={() => setActiveLines((prev) => ({ ...prev, [l.key]: !prev[l.key] }))}
-							className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer border ${activeLines[l.key]
-								? 'bg-white shadow-2xs border-slate-200 text-slate-800'
-								: 'bg-slate-100 text-slate-400 border-transparent opacity-50'
-								}`}
-						>
-							<span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: l.color }}></span>
-							<span>{l.label}</span>
-						</button>
-					))}
+					{lines.map((l) => {
+						if (l.key === 'close' && chartType === 'candle') return null;
+						return (
+							<button
+								key={l.key}
+								onClick={() => setActiveLines((prev) => ({ ...prev, [l.key]: !prev[l.key] }))}
+								className={`px-2.5 py-1 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer border ${activeLines[l.key]
+									? 'bg-white shadow-2xs border-slate-200 text-slate-800'
+									: 'bg-slate-100 text-slate-400 border-transparent opacity-50'
+									}`}
+							>
+								<span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: l.color }}></span>
+								<span>{l.label}</span>
+							</button>
+						);
+					})}
 				</div>
 			</div>
 
 			{/* Dynamic Floating Hover Info Card Tooltip (Moves with Mouse) */}
-			{hoveredIdx !== null && dataSlice[hoveredIdx] && (() => {
+			{hoveredIdx !== null && dataSlice[hoveredIdx] && !isDragging && (() => {
 				const x = getX(hoveredIdx);
 				const isRightHalf = x > svgWidth / 2;
 				const leftPct = (x / svgWidth) * 100;
@@ -332,6 +531,11 @@ const TrendPriceDMAChart = ({ history = [], isBreakoutMode = false, isGlobalMode
 				const gIdx = validHistory.indexOf(currItem);
 				const pClose = gIdx > 0 ? validHistory[gIdx - 1].close : currItem.close;
 				const isBuy = currItem.close >= pClose;
+
+				const openVal = currItem.open ?? currItem.close;
+				const highVal = currItem.high ?? Math.max(openVal, currItem.close);
+				const lowVal = currItem.low ?? Math.min(openVal, currItem.close);
+
 				return (
 					<div
 						className="absolute top-16 bg-white/95 backdrop-blur-md border border-slate-200/90 rounded-xl p-3.5 shadow-xl z-30 min-w-[210px] pointer-events-none transition-all duration-75 ease-out"
@@ -346,12 +550,23 @@ const TrendPriceDMAChart = ({ history = [], isBreakoutMode = false, isGlobalMode
 								{currItem.label || currItem.date}
 							</span>
 							<span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-[#9462d2]">
-								Daily Trend
+								{chartType === 'candle' ? 'Candlestick OHLC' : 'Daily Trend'}
 							</span>
 						</div>
+
+						{/* OHLC Cards in Tooltip when in Candle Mode or when hovered */}
+						{chartType === 'candle' && (
+							<div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-slate-600 border-b border-slate-100 pb-2 mb-2 font-medium">
+								<div>O: <strong className="text-slate-900">{formatRs(openVal)}</strong></div>
+								<div>H: <strong className="text-slate-900">{formatRs(highVal)}</strong></div>
+								<div>L: <strong className="text-slate-900">{formatRs(lowVal)}</strong></div>
+								<div>C: <strong className="text-slate-900">{formatRs(currItem.close)}</strong></div>
+							</div>
+						)}
+
 						<div className="space-y-1.5 text-xs font-semibold">
 							{lines.map((l) => {
-								if (l.key === 'avgVol' || !activeLines[l.key]) return null;
+								if (l.key === 'avgVol' || !activeLines[l.key] || (l.key === 'close' && chartType === 'candle')) return null;
 								const val = currItem[l.key];
 								return (
 									<div key={l.key} className="flex items-center justify-between gap-3">
@@ -388,8 +603,13 @@ const TrendPriceDMAChart = ({ history = [], isBreakoutMode = false, isGlobalMode
 				);
 			})()}
 
-			<div className="relative w-full overflow-hidden">
-				<svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} className="w-full h-auto overflow-visible">
+			<div
+				ref={chartContainerRef}
+				onPointerDown={handlePointerDown}
+				style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+				className={`relative w-full overflow-hidden select-none ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
+			>
+				<svg viewBox={`0 0 ${svgWidth} ${svgHeight}`} style={{ cursor: isDragging ? 'grabbing' : 'grab' }} className="w-full h-auto overflow-visible">
 					{/* Y-Axis Grid Lines */}
 					{yTicks.map((val, idx) => {
 						const y = getY(val);
@@ -439,6 +659,55 @@ const TrendPriceDMAChart = ({ history = [], isBreakoutMode = false, isGlobalMode
 							</g>
 						);
 					})()}
+
+					{/* Candlestick Chart Bars (when chartType === 'candle') */}
+					{chartType === 'candle' &&
+						dataSlice.map((item, i) => {
+							const c = item.close;
+							if (!c) return null;
+							const o = item.open ?? c;
+							const h = item.high ?? Math.max(o, c);
+							const l = item.low ?? Math.min(o, c);
+
+							const x = getX(i);
+							const yOpen = getY(o);
+							const yClose = getY(c);
+							const yHigh = getY(h);
+							const yLow = getY(l);
+
+							if (yOpen === null || yClose === null || yHigh === null || yLow === null) return null;
+
+							const isBullish = c >= o;
+							const candleColor = isBullish ? '#10b981' : '#f43f5e';
+							const bodyY = Math.min(yOpen, yClose);
+							const bodyH = Math.max(Math.abs(yOpen - yClose), 1.5);
+							const candleW = Math.max(2, Math.min(columnBandWidth * 0.65, 8));
+
+							return (
+								<g key={'candle-' + i} className="transition-all duration-300">
+									{/* High-Low Wick */}
+									<line
+										x1={x}
+										y1={yHigh}
+										x2={x}
+										y2={yLow}
+										stroke={candleColor}
+										strokeWidth="0.75"
+										opacity={hoveredIdx === i ? 1 : 0.85}
+									/>
+									{/* Open-Close Body Rectangle */}
+									<rect
+										x={x - candleW / 2}
+										y={bodyY}
+										width={candleW}
+										height={bodyH}
+										fill={candleColor}
+										opacity={hoveredIdx === i ? 1 : 0.85}
+										rx="0.5"
+									/>
+								</g>
+							);
+						})}
 
 					{/* Volume Bar Chart (Buy = Blue #007cc3, Sell = Yellow #f59e0b) */}
 					{dataSlice.map((item, i) => {
@@ -497,7 +766,7 @@ const TrendPriceDMAChart = ({ history = [], isBreakoutMode = false, isGlobalMode
 						</g>
 					)}
 
-					{hoveredIdx !== null && (
+					{hoveredIdx !== null && dataSlice[hoveredIdx] && (
 						<line
 							x1={getX(hoveredIdx)}
 							y1={paddingTop}
@@ -531,8 +800,9 @@ const TrendPriceDMAChart = ({ history = [], isBreakoutMode = false, isGlobalMode
 						);
 					})}
 
+					{/* Trend DMA lines & Price Line */}
 					{lines.map((l) => {
-						if (!activeLines[l.key]) return null;
+						if (!activeLines[l.key] || (l.key === 'close' && chartType === 'candle')) return null;
 						const validPoints = [];
 						dataSlice.forEach((item, i) => {
 							const val = item[l.key];
@@ -556,6 +826,7 @@ const TrendPriceDMAChart = ({ history = [], isBreakoutMode = false, isGlobalMode
 									className="transition-all duration-500 ease-in-out"
 								/>
 								{hoveredIdx !== null &&
+									dataSlice[hoveredIdx] &&
 									dataSlice[hoveredIdx][l.key] !== null &&
 									dataSlice[hoveredIdx][l.key] !== undefined &&
 									!isNaN(Number(dataSlice[hoveredIdx][l.key])) &&
@@ -585,8 +856,8 @@ const TrendPriceDMAChart = ({ history = [], isBreakoutMode = false, isGlobalMode
 								width={columnBandWidth}
 								height={chartHeight}
 								fill="transparent"
-								className="cursor-pointer"
-								onMouseEnter={() => setHoveredIdx(idx)}
+								style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+								onMouseEnter={() => { if (!dragRef.current.isDown) setHoveredIdx(idx); }}
 								onMouseLeave={() => setHoveredIdx(null)}
 							/>
 						);
@@ -6355,6 +6626,103 @@ export default function Analysis({
 														<span>Strong Sell ({pct(strongSell)}%)</span>
 													</div>
 												</div>
+											</div>
+										</div>
+
+										{/* Analyst Details & Research Reports Table Section */}
+										<div className="bg-white rounded-2xl border border-slate-200/80 shadow-2xs overflow-hidden">
+											<div className="px-5 py-4 bg-slate-50/80 border-b border-slate-200/60 flex items-center justify-between">
+												<h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+													<span className="material-symbols-outlined text-[#9462d2] text-[20px]">feed</span>
+													<span>Analyst Details & Research Reports</span>
+												</h3>
+												{item.analyst_details && item.analyst_details.length > 0 && (
+													<span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-purple-50 text-[#9462d2] border border-purple-200">
+														{item.analyst_details.length} Reports Found
+													</span>
+												)}
+											</div>
+
+											<div className="overflow-x-auto">
+												<table className="w-full text-left border-collapse text-xs">
+													<thead>
+														<tr className="bg-slate-100/70 text-slate-600 font-bold border-b border-slate-200/60 uppercase tracking-wider text-[11px]">
+															<th className="py-3 px-4 min-w-[110px]">Date</th>
+															<th className="py-3 px-4 min-w-[140px]">Stock</th>
+															<th className="py-3 px-4 min-w-[180px]">Author</th>
+															<th className="py-3 px-4 min-w-[90px] text-right">LTP</th>
+															<th className="py-3 px-4 min-w-[100px] text-right">Target</th>
+															<th className="py-3 px-4 min-w-[140px] text-center">Price at Reco</th>
+															<th className="py-3 px-4 min-w-[100px] text-right">Upside (%)</th>
+															<th className="py-3 px-4 min-w-[100px] text-center">Type</th>
+														</tr>
+													</thead>
+													<tbody className="divide-y divide-slate-100 font-medium">
+														{item.analyst_details && item.analyst_details.length > 0 ? (
+															item.analyst_details.map((rep, idx) => {
+																const isConsensusRow = rep.author === 'Consensus Share Price Target';
+																const rType = (rep.reco_type || '').toLowerCase();
+																let rStyle = 'bg-slate-100 text-slate-700 border-slate-200';
+																if (rType.includes('buy')) {
+																	rStyle = rType.includes('strong')
+																		? 'bg-emerald-100 text-emerald-800 border-emerald-300 font-extrabold'
+																		: 'bg-emerald-50 text-emerald-700 border-emerald-200 font-bold';
+																} else if (rType.includes('hold')) {
+																	rStyle = 'bg-amber-50 text-amber-800 border-amber-200 font-bold';
+																} else if (rType.includes('sell')) {
+																	rStyle = rType.includes('strong')
+																		? 'bg-rose-100 text-rose-800 border-rose-300 font-extrabold'
+																		: 'bg-rose-50 text-rose-700 border-rose-200 font-bold';
+																}
+
+																const upsideVal = rep.upside ? (rep.upside.includes('%') ? rep.upside : `${rep.upside}%`) : '—';
+																const isPositiveUpside = !upsideVal.includes('-') && upsideVal !== '—' && !upsideVal.toLowerCase().includes('target met');
+
+																return (
+																	<tr
+																		key={rep.id || idx}
+																		className={`transition-colors ${isConsensusRow ? 'bg-purple-50/40 font-bold border-b border-purple-100' : 'hover:bg-slate-50/80'}`}
+																	>
+																		<td className="py-3 px-4 text-slate-700 font-semibold whitespace-nowrap">
+																			{rep.report_date}
+																		</td>
+																		<td className="py-3 px-4 text-slate-800 font-bold whitespace-nowrap">
+																			{rep.stock_name || item.stockName || item.symbol}
+																		</td>
+																		<td className="py-3 px-4 whitespace-nowrap">
+																			<span className={isConsensusRow ? 'text-[#9462d2] font-bold' : 'text-slate-800 font-semibold'}>
+																				{rep.author}
+																			</span>
+																		</td>
+																		<td className="py-3 px-4 text-right text-slate-700 font-bold whitespace-nowrap">
+																			{rep.ltp || item.price || '—'}
+																		</td>
+																		<td className="py-3 px-4 text-right text-slate-800 font-extrabold whitespace-nowrap">
+																			{rep.target_price || '—'}
+																		</td>
+																		<td className="py-3 px-4 text-center text-slate-600 font-medium whitespace-nowrap">
+																			{rep.price_at_reco || '—'}
+																		</td>
+																		<td className={`py-3 px-4 text-right font-extrabold whitespace-nowrap ${isPositiveUpside ? 'text-emerald-600' : 'text-slate-600'}`}>
+																			{upsideVal}
+																		</td>
+																		<td className="py-3 px-4 text-center whitespace-nowrap">
+																			<span className={`px-2.5 py-0.5 rounded-md border text-[11px] uppercase tracking-wide inline-block ${rStyle}`}>
+																				{rep.reco_type || '—'}
+																			</span>
+																		</td>
+																	</tr>
+																);
+															})
+														) : (
+															<tr>
+																<td colSpan="9" className="py-8 text-center text-slate-400 font-medium">
+																	No analyst details reports found for this stock.
+																</td>
+															</tr>
+														)}
+													</tbody>
+												</table>
 											</div>
 										</div>
 									</div>

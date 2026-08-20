@@ -30,11 +30,23 @@ TIERS = {
     "pro":    ("dma100", True, True),
 }
 
-# The computation scans ~185k history rows and takes a couple of seconds. The underlying
-# data only changes when the scrapers run, so a short TTL keeps chat responsive without
-# ever serving genuinely stale figures.
-CACHE_TTL_SECONDS = 300
-_cache = {"at": 0.0, "data": None}
+# The computation scans ~185k history rows and takes a couple of seconds, so it is cached.
+# Rather than trusting a TTL, the cache is keyed on the newest scraped_at in stock_history:
+# a ~16ms probe per request means the 5am scrape batch invalidates it on the very next
+# question, with no window where the chat and the database disagree. The TTL is only a
+# backstop for the case where a scraper writes rows without advancing scraped_at.
+CACHE_TTL_SECONDS = 900
+_cache = {"at": 0.0, "data": None, "stamp": None}
+
+
+def data_stamp(conn):
+    """Newest scrape timestamp in stock_history — the cache key. None if unavailable."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT MAX(scraped_at) FROM stock_history;")
+            return cur.fetchone()[0]
+    except Exception:
+        return None
 
 
 def calc_crossover_stats(rows, dma_key, req_dma20=False, req_dma50=False):
@@ -158,6 +170,48 @@ def calc_breakout_stats(history):
     }
 
 
+def calc_momentum_stats(history):
+    """Headroom to the 2-year base high, plus trailing returns.
+
+    "Momentum" here means capacity to rise, not distance already travelled. A stock
+    trading 12% under its base high has a defined 12% runway to reclaim that level;
+    one already 95% above it has no defined target left and is, if anything, extended.
+    So the signal of interest is the GAP BELOW the base high, narrow enough to be
+    reachable but wide enough to be worth taking.
+    """
+    empty = {"gapToHighPct": None, "ret20d": None, "ret60d": None, "ret120d": None,
+             "aboveDma20": None, "aboveDma50": None, "baseHigh": None, "lastClose": None}
+    if not history or len(history) < 63:
+        return dict(empty)
+
+    total = len(history)
+    last = history[-1]["close"]
+    base_window = history[max(0, total - 504):max(0, total - 63)]
+    if not base_window or last <= 0:
+        return dict(empty)
+
+    base_high = max(r["close"] for r in base_window)
+    if base_high <= 0:
+        return dict(empty)
+
+    def ret(days):
+        if total <= days:
+            return None
+        prev = history[-1 - days]["close"]
+        return round((last - prev) / prev * 100.0, 2) if prev > 0 else None
+
+    return {
+        # Positive = trading BELOW the base high by this much, i.e. the runway.
+        # Negative = already above it.
+        "gapToHighPct": round((base_high - last) / base_high * 100.0, 2),
+        "ret20d": ret(20), "ret60d": ret(60), "ret120d": ret(120),
+        "aboveDma20": (history[-1].get("dma20") is not None and last > history[-1]["dma20"]),
+        "aboveDma50": (history[-1].get("dma50") is not None and last > history[-1]["dma50"]),
+        "baseHigh": round(base_high, 2),
+        "lastClose": round(last, 2),
+    }
+
+
 def load_symbol_history(conn):
     """Every symbol's close plus its 20/50/100/200 DMA series, oldest first."""
     with conn.cursor() as cur:
@@ -214,8 +268,15 @@ def load_stock_meta(conn):
 
 
 def compute_all(conn, use_cache=True):
-    """All three crossover tiers for every symbol. Cached for CACHE_TTL_SECONDS."""
-    if use_cache and _cache["data"] is not None and (time.time() - _cache["at"]) < CACHE_TTL_SECONDS:
+    """All three crossover tiers for every symbol.
+
+    Served from cache only while the newest scrape timestamp is unchanged, so a scraper
+    run makes the next question recompute automatically.
+    """
+    stamp = data_stamp(conn)
+    if (use_cache and _cache["data"] is not None
+            and _cache["stamp"] == stamp
+            and (time.time() - _cache["at"]) < CACHE_TTL_SECONDS):
         return _cache["data"]
 
     history = load_symbol_history(conn)
@@ -232,11 +293,12 @@ def compute_all(conn, use_cache=True):
             "golden": calc_crossover_stats(rows, "dma50", req_dma20=True),
             "pro": calc_crossover_stats(rows, "dma100", req_dma20=True, req_dma50=True),
             "breakout": calc_breakout_stats(rows),
+            "momentum": calc_momentum_stats(rows),
         })
 
-    _cache["at"], _cache["data"] = time.time(), results
+    _cache["at"], _cache["data"], _cache["stamp"] = time.time(), results, stamp
     return results
 
 
 def invalidate_cache():
-    _cache["at"], _cache["data"] = 0.0, None
+    _cache["at"], _cache["data"], _cache["stamp"] = 0.0, None, None

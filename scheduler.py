@@ -58,7 +58,7 @@ BOARDERS_HOURS = [8, 10, 12, 14, 16, 18]
 
 
 def resolve_venv_python():
-    """Find and return virtual environment python executable if present."""
+    """Find, activate, and return virtual environment python executable if present."""
     base_dir = str(BASE_DIR)
     backend_dir = os.path.join(base_dir, "backend")
 
@@ -71,11 +71,29 @@ def resolve_venv_python():
 
     for v_path in possible_paths:
         if sys.platform == "win32":
-            py_bin = os.path.join(v_path, "Scripts", "python.exe")
+            scripts_dirs = [
+                os.path.join(v_path, "Scripts"),
+                os.path.join(v_path, "script"),
+                os.path.join(v_path, "scripts"),
+            ]
+            scripts_dir = None
+            py_bin = None
+            for s_dir in scripts_dirs:
+                candidate = os.path.join(s_dir, "python.exe")
+                if os.path.exists(candidate):
+                    scripts_dir = s_dir
+                    py_bin = candidate
+                    break
         else:
-            py_bin = os.path.join(v_path, "bin", "python")
+            scripts_dir = os.path.join(v_path, "bin")
+            py_bin = os.path.join(scripts_dir, "python")
 
-        if os.path.exists(py_bin):
+        if py_bin and os.path.exists(py_bin):
+            # Activate virtual environment in os.environ before running scrapers
+            os.environ["VIRTUAL_ENV"] = v_path
+            if scripts_dir and scripts_dir not in os.environ.get("PATH", ""):
+                os.environ["PATH"] = scripts_dir + os.pathsep + os.environ.get("PATH", "")
+            os.environ.pop("PYTHONHOME", None)
             return py_bin
 
     return sys.executable
@@ -103,6 +121,7 @@ def run_single_scraper(script_name, python_exec=None, company=None):
         subprocess.run(
             cmd,
             cwd=str(SCRAPE_DIR),
+            env=os.environ.copy(),
             capture_output=False,
             text=True,
             check=True
@@ -154,6 +173,7 @@ def run_all_scrapers(python_exec=None, company=None):
             subprocess.run(
                 cmd,
                 cwd=str(SCRAPE_DIR),
+                env=os.environ.copy(),
                 capture_output=False,
                 text=True,
                 check=True
